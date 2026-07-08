@@ -1,0 +1,1967 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOTUS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+const { useState, useMemo, useEffect, useRef } = React;
+/* ============================================================
+   РАСЧЁТНОЕ ЯДРО (валидировано против AstroSage/VedicHoro, Δ ≤ ~1′)
+   Аянамша Лахири, средний узел. Продакшен-замена: Swiss Ephemeris.
+============================================================ */
+const D2R = Math.PI / 180;
+const norm = (x) => ((x % 360) + 360) % 360;
+function jdFrom(y, mo, d, h, mi, tz) {
+    const ut = h + mi / 60 - tz;
+    if (mo <= 2) {
+        y -= 1;
+        mo += 12;
+    }
+    const A = Math.floor(y / 100), B = 2 - A + Math.floor(A / 4);
+    return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (mo + 1)) + d + B - 1524.5 + ut / 24;
+}
+const jdToDate = (jd) => new Date((jd - 2440587.5) * 86400000);
+function sunLon(T) {
+    const L0 = norm(280.46646 + 36000.76983 * T + 0.0003032 * T * T);
+    const M = norm(357.52911 + 35999.05029 * T - 0.0001537 * T * T);
+    const C = (1.914602 - 0.004817 * T - 0.000014 * T * T) * Math.sin(M * D2R)
+        + (0.019993 - 0.000101 * T) * Math.sin(2 * M * D2R) + 0.000289 * Math.sin(3 * M * D2R);
+    const O = norm(125.04 - 1934.136 * T);
+    return norm(L0 + C - 0.00569 - 0.00478 * Math.sin(O * D2R));
+}
+const MLR = [[0, 0, 1, 0, 6288774], [2, 0, -1, 0, 1274027], [2, 0, 0, 0, 658314], [0, 0, 2, 0, 213618], [0, 1, 0, 0, -185116], [0, 0, 0, 2, -114332], [2, 0, -2, 0, 58793], [2, -1, -1, 0, 57066], [2, 0, 1, 0, 53322], [2, -1, 0, 0, 45758], [0, 1, -1, 0, -40923], [1, 0, 0, 0, -34720], [0, 1, 1, 0, -30383], [2, 0, 0, -2, 15327], [0, 0, 1, 2, -12528], [0, 0, 1, -2, 10980], [4, 0, -1, 0, 10675], [0, 0, 3, 0, 10034], [4, 0, -2, 0, 8548], [2, 1, -1, 0, -7888], [2, 1, 0, 0, -6766], [1, 0, -1, 0, -5163], [1, 1, 0, 0, 4987], [2, -1, 1, 0, 4036], [2, 0, 2, 0, 3994], [4, 0, 0, 0, 3861], [2, 0, -3, 0, 3665], [0, 1, -2, 0, -2689], [2, 0, -1, 2, -2602], [2, -1, -2, 0, 2390], [1, 0, 1, 0, -2348], [2, -2, 0, 0, 2236], [0, 1, 2, 0, -2120], [0, 2, 0, 0, -2069], [2, -2, -1, 0, 2048], [2, 0, 1, -2, -1773], [2, 0, 0, 2, -1595], [4, -1, -1, 0, 1215], [0, 0, 2, 2, -1110], [3, 0, -1, 0, -892], [2, 1, 1, 0, -810], [4, -1, -2, 0, 759], [0, 2, -1, 0, -713], [2, 2, -1, 0, -700], [2, 1, -2, 0, 691], [2, -1, 0, -2, 596], [4, 0, 1, 0, 549], [0, 0, 4, 0, 537], [4, -1, 0, 0, 520], [1, 0, -2, 0, -487], [2, 1, 0, -2, -399], [0, 0, 2, -2, -381], [1, 1, 1, 0, 351], [3, 0, -2, 0, -340], [4, 0, -3, 0, 330], [2, -1, 2, 0, 327], [0, 2, 1, 0, -323], [1, 1, -1, 0, 299], [2, 0, 3, 0, 294]];
+function moonLon(T) {
+    const Lp = norm(218.3164477 + 481267.88123421 * T - 0.0015786 * T * T + T ** 3 / 538841 - T ** 4 / 65194000);
+    const D = norm(297.8501921 + 445267.1114034 * T - 0.0018819 * T * T + T ** 3 / 545868 - T ** 4 / 113065000);
+    const M = norm(357.5291092 + 35999.0502909 * T - 0.0001536 * T * T + T ** 3 / 24490000);
+    const Mp = norm(134.9633964 + 477198.8675055 * T + 0.0087414 * T * T + T ** 3 / 69699 - T ** 4 / 14712000);
+    const F = norm(93.272095 + 483202.0175233 * T - 0.0036539 * T * T - T ** 3 / 3526000 + T ** 4 / 863310000);
+    const E = 1 - 0.002516 * T - 0.0000074 * T * T;
+    const A1 = norm(119.75 + 131.849 * T), A2 = norm(53.09 + 479264.29 * T);
+    let s = 0;
+    for (const [d, m, mp, f, c] of MLR)
+        s += c * Math.pow(E, Math.abs(m)) * Math.sin((d * D + m * M + mp * Mp + f * F) * D2R);
+    s += 3958 * Math.sin(A1 * D2R) + 1962 * Math.sin((Lp - F) * D2R) + 318 * Math.sin(A2 * D2R);
+    return norm(Lp + s * 1e-6);
+}
+const EL = {
+    Mercury: [[0.38709927, 0], [0.20563593, 0.00001906], [7.00497902, -0.00594749], [252.2503235, 149472.67411175], [77.45779628, 0.16047689], [48.33076593, -0.12534081]],
+    Venus: [[0.72333566, 0.0000039], [0.00677672, -0.00004107], [3.39467605, -0.0007889], [181.9790995, 58517.81538729], [131.60246718, 0.00268329], [76.67984255, -0.27769418]],
+    Earth: [[1.00000261, 0.00000562], [0.01671123, -0.00004392], [-0.00001531, -0.01294668], [100.46457166, 35999.37244981], [102.93768193, 0.32327364], [0, 0]],
+    Mars: [[1.52371034, 0.00001847], [0.0933941, 0.00007882], [1.84969142, -0.00813131], [-4.55343205, 19140.30268499], [-23.94362959, 0.44441088], [49.55953891, -0.29257343]],
+    Jupiter: [[5.202887, -0.00011607], [0.04838624, -0.00013253], [1.30439695, -0.00183714], [34.39644051, 3034.74612775], [14.72847983, 0.21252668], [100.47390909, 0.20469106]],
+    Saturn: [[9.53667594, -0.0012506], [0.05386179, -0.00050991], [2.48599187, 0.00193609], [49.95424423, 1222.49362201], [92.59887831, -0.41897216], [113.66242448, -0.28867794]],
+};
+function helio(name, T) {
+    const [a, e, I, L, vp, Om] = EL[name].map(([v, r]) => v + r * T);
+    const w = vp - Om;
+    let M = norm(L - vp);
+    if (M > 180)
+        M -= 360;
+    let E0 = M + (180 / Math.PI) * e * Math.sin(M * D2R);
+    for (let i = 0; i < 25; i++) {
+        const dE = (M - (E0 - (180 / Math.PI) * e * Math.sin(E0 * D2R))) / (1 - e * Math.cos(E0 * D2R));
+        E0 += dE;
+        if (Math.abs(dE) < 1e-9)
+            break;
+    }
+    const xp = a * (Math.cos(E0 * D2R) - e), yp = a * Math.sqrt(1 - e * e) * Math.sin(E0 * D2R);
+    const [cw, sw, cO, sO, ci, si] = [Math.cos(w * D2R), Math.sin(w * D2R), Math.cos(Om * D2R), Math.sin(Om * D2R), Math.cos(I * D2R), Math.sin(I * D2R)];
+    return [(cw * cO - sw * sO * ci) * xp + (-sw * cO - cw * sO * ci) * yp,
+        (cw * sO + sw * cO * ci) * xp + (-sw * sO + cw * cO * ci) * yp,
+        sw * si * xp + cw * si * yp];
+}
+function planetLon(name, T) {
+    const p = helio(name, T), e = helio("Earth", T);
+    const lon = Math.atan2(p[1] - e[1], p[0] - e[0]) / D2R;
+    return norm(lon + 1.3969713 * T + 0.0003086 * T * T);
+}
+const meanNode = (T) => norm(125.0445479 - 1934.1362891 * T + 0.0020754 * T * T + T ** 3 / 467441);
+const obliq = (T) => 23.439291111 - 0.0130041667 * T;
+const gmst = (jd) => { const T = (jd - 2451545) / 36525; return norm(280.46061837 + 360.98564736629 * (jd - 2451545) + 0.000387933 * T * T); };
+function ascendant(jd, lat, lonE) {
+    const T = (jd - 2451545) / 36525, eps = obliq(T), lst = norm(gmst(jd) + lonE);
+    const alt = (lam) => {
+        const ra = Math.atan2(Math.sin(lam * D2R) * Math.cos(eps * D2R), Math.cos(lam * D2R)) / D2R;
+        const dec = Math.asin(Math.sin(eps * D2R) * Math.sin(lam * D2R)) / D2R;
+        const H = norm(lst - ra);
+        return [Math.asin(Math.sin(lat * D2R) * Math.sin(dec * D2R) + Math.cos(lat * D2R) * Math.cos(dec * D2R) * Math.cos(H * D2R)) / D2R, H];
+    };
+    let best = null, [pa] = alt(0);
+    for (let l = 1; l <= 360; l++) {
+        const [a] = alt(l % 360);
+        if ((pa < 0) !== (a < 0)) {
+            let lo = l - 1, hi = l, flo = pa;
+            for (let i = 0; i < 45; i++) {
+                const mid = (lo + hi) / 2, [am] = alt(mid % 360);
+                if ((am < 0) === (flo < 0)) {
+                    lo = mid;
+                    flo = am;
+                }
+                else
+                    hi = mid;
+            }
+            const cand = ((lo + hi) / 2) % 360, [, Hc] = alt(cand);
+            if (Math.sin(Hc * D2R) < 0)
+                best = cand;
+        }
+        pa = a;
+    }
+    return best;
+}
+const lahiri = (jd) => { const t = (jd - 2415020) / 36525; return 22.460148 + 1.396042 * t + 3.08e-4 * t * t; };
+/* Сидерическая долгота планеты на произвольный момент */
+function lonAt(k, jd) {
+    const T = (jd - 2451545) / 36525, ay = lahiri(jd);
+    if (k === "Sun")
+        return norm(sunLon(T) - ay);
+    if (k === "Moon")
+        return norm(moonLon(T) - ay);
+    if (k === "Rahu")
+        return norm(meanNode(T) - ay);
+    if (k === "Ketu")
+        return norm(meanNode(T) + 180 - ay);
+    return norm(planetLon(k, T) - ay);
+}
+/* Текущие транзиты: знак и накшатра с датами выхода из каждого */
+const TR_STEP = { Moon: 0.05, Sun: 0.5, Mercury: 0.25, Venus: 0.25, Mars: 0.5, Jupiter: 1, Saturn: 2, Rahu: 2, Ketu: 2 };
+function transitsNow(jdNow) {
+    return ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"].map((k) => {
+        const lon = lonAt(k, jdNow), sign = Math.floor(lon / 30), nak = Math.floor(lon / (40 / 3));
+        const step = TR_STEP[k];
+        let untilSign = 0, untilNak = 0, jd2 = jdNow;
+        for (let i = 0; i < 1200 && !(untilSign && untilNak); i++) {
+            jd2 += step;
+            const l2 = lonAt(k, jd2);
+            if (!untilNak && Math.floor(l2 / (40 / 3)) !== nak)
+                untilNak = jd2;
+            if (!untilSign && Math.floor(l2 / 30) !== sign)
+                untilSign = jd2;
+        }
+        if (!untilSign)
+            untilSign = jd2;
+        if (!untilNak)
+            untilNak = jd2;
+        return { key: k, lon, sign, nak, until: untilSign, untilNak };
+    });
+}
+/* ============================================================
+   ДЖЬОТИШ-СЛОЙ
+============================================================ */
+const SIGNS = [
+    { ru: "Овен", en: "Aries", ab: "Ari" }, { ru: "Телец", en: "Taurus", ab: "Tau" },
+    { ru: "Близнецы", en: "Gemini", ab: "Gem" }, { ru: "Рак", en: "Cancer", ab: "Can" },
+    { ru: "Лев", en: "Leo", ab: "Leo" }, { ru: "Дева", en: "Virgo", ab: "Vir" },
+    { ru: "Весы", en: "Libra", ab: "Lib" }, { ru: "Скорпион", en: "Scorpio", ab: "Sco" },
+    { ru: "Стрелец", en: "Sagittarius", ab: "Sag" }, { ru: "Козерог", en: "Capricorn", ab: "Cap" },
+    { ru: "Водолей", en: "Aquarius", ab: "Aqu" }, { ru: "Рыбы", en: "Pisces", ab: "Pis" }
+];
+const SIGN_LORD = ["Mars", "Venus", "Mercury", "Moon", "Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Saturn", "Jupiter"];
+const NAKS = [
+    ["Ашвини", "Ashwini", "Ketu"], ["Бхарани", "Bharani", "Venus"], ["Криттика", "Krittika", "Sun"],
+    ["Рохини", "Rohini", "Moon"], ["Мригашира", "Mrigashira", "Mars"], ["Ардра", "Ardra", "Rahu"],
+    ["Пунарвасу", "Punarvasu", "Jupiter"], ["Пушья", "Pushya", "Saturn"], ["Ашлеша", "Ashlesha", "Mercury"],
+    ["Магха", "Magha", "Ketu"], ["Пурва Пхалгуни", "P.Phalguni", "Venus"], ["Уттара Пхалгуни", "U.Phalguni", "Sun"],
+    ["Хаста", "Hasta", "Moon"], ["Читра", "Chitra", "Mars"], ["Свати", "Swati", "Rahu"],
+    ["Вишакха", "Vishakha", "Jupiter"], ["Анурадха", "Anuradha", "Saturn"], ["Джйештха", "Jyeshtha", "Mercury"],
+    ["Мула", "Mula", "Ketu"], ["Пурва Ашадха", "P.Ashadha", "Venus"], ["Уттара Ашадха", "U.Ashadha", "Sun"],
+    ["Шравана", "Shravana", "Moon"], ["Дхаништха", "Dhanishtha", "Mars"], ["Шатабхиша", "Shatabhisha", "Rahu"],
+    ["Пурва Бхадрапада", "P.Bhadrapada", "Jupiter"], ["Уттара Бхадрапада", "U.Bhadrapada", "Saturn"], ["Ревати", "Revati", "Mercury"]
+];
+const PL_ORDER = ["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"];
+const PL = {
+    Sun: { ru: "Солнце", en: "Sun", ab: "Su", c: "#f0c04a" }, Moon: { ru: "Луна", en: "Moon", ab: "Mo", c: "#e9e4d8" },
+    Mars: { ru: "Марс", en: "Mars", ab: "Ma", c: "#d94f4f" }, Mercury: { ru: "Меркурий", en: "Mercury", ab: "Me", c: "#5fb878" },
+    Jupiter: { ru: "Юпитер", en: "Jupiter", ab: "Ju", c: "#e0863c" }, Venus: { ru: "Венера", en: "Venus", ab: "Ve", c: "#e58fb1" },
+    Saturn: { ru: "Сатурн", en: "Saturn", ab: "Sa", c: "#98a0ac" }, Rahu: { ru: "Раху", en: "Rahu", ab: "Ra", c: "#8f7bb5" },
+    Ketu: { ru: "Кету", en: "Ketu", ab: "Ke", c: "#a98c6a" }
+};
+/* Естественная дружба грах (наисаргика-майтри) */
+const NAT = {
+    Sun: { f: ["Moon", "Mars", "Jupiter"], e: ["Venus", "Saturn"] }, Moon: { f: ["Sun", "Mercury"], e: [] },
+    Mars: { f: ["Sun", "Moon", "Jupiter"], e: ["Mercury"] }, Mercury: { f: ["Sun", "Venus"], e: ["Moon"] },
+    Jupiter: { f: ["Sun", "Moon", "Mars"], e: ["Mercury", "Venus"] }, Venus: { f: ["Mercury", "Saturn"], e: ["Sun", "Moon"] },
+    Saturn: { f: ["Mercury", "Venus"], e: ["Sun", "Moon", "Mars"] }
+};
+const ASPECT_OFF = { Mars: [4, 7, 8], Jupiter: [5, 7, 9], Saturn: [3, 7, 10], Rahu: [5, 7, 9], Ketu: [5, 7, 9] };
+const REL_LBL = {
+    ru: { 2: "Большой друг", 1: "Друг", 0: "Нейтрально", "-1": "Враг", "-2": "Большой враг", own: "Свой знак" },
+    en: { 2: "Great friend", 1: "Friend", 0: "Neutral", "-1": "Enemy", "-2": "Great enemy", own: "Own sign" }
+};
+const DIG_LBL = {
+    ru: { ex: "Экзальтация", own: "Свой знак", de: "Дебилитация", n: "Нейтрально" },
+    en: { ex: "Exalted", own: "Own sign", de: "Debilitated", n: "Neutral" }
+};
+/* ============================================================
+   ГОРОДА: имя RU | имя EN | страна RU | страна EN | шир | долг | зона
+   Прототипный справочник (~250). Продакшен: геокодер + IANA tzdata.
+============================================================ */
+const CITY_RAW = `Москва|Moscow|Россия|Russia|55.75|37.62|ru3
+Санкт-Петербург|Saint Petersburg|Россия|Russia|59.94|30.31|ru3
+Новосибирск|Novosibirsk|Россия|Russia|55.03|82.92|ru7
+Екатеринбург|Yekaterinburg|Россия|Russia|56.84|60.61|ru5
+Казань|Kazan|Россия|Russia|55.79|49.12|ru3
+Нижний Новгород|Nizhny Novgorod|Россия|Russia|56.30|43.94|ru3
+Челябинск|Chelyabinsk|Россия|Russia|55.16|61.40|ru5
+Самара|Samara|Россия|Russia|53.20|50.15|ru4
+Омск|Omsk|Россия|Russia|54.99|73.37|ru6
+Ростов-на-Дону|Rostov-on-Don|Россия|Russia|47.24|39.71|ru3
+Уфа|Ufa|Россия|Russia|54.74|55.97|ru5
+Красноярск|Krasnoyarsk|Россия|Russia|56.01|92.87|ru7
+Воронеж|Voronezh|Россия|Russia|51.66|39.20|ru3
+Пермь|Perm|Россия|Russia|58.01|56.25|ru5
+Волгоград|Volgograd|Россия|Russia|48.71|44.51|ru3
+Краснодар|Krasnodar|Россия|Russia|45.04|38.98|ru3
+Саратов|Saratov|Россия|Russia|51.53|46.03|ru4
+Тюмень|Tyumen|Россия|Russia|57.15|65.53|ru5
+Тольятти|Tolyatti|Россия|Russia|53.51|49.42|ru4
+Ижевск|Izhevsk|Россия|Russia|56.85|53.21|ru4
+Барнаул|Barnaul|Россия|Russia|53.35|83.77|ru7
+Ульяновск|Ulyanovsk|Россия|Russia|54.32|48.40|ru4
+Иркутск|Irkutsk|Россия|Russia|52.29|104.28|ru8
+Хабаровск|Khabarovsk|Россия|Russia|48.48|135.08|ru10
+Ярославль|Yaroslavl|Россия|Russia|57.63|39.87|ru3
+Владивосток|Vladivostok|Россия|Russia|43.12|131.89|ru10
+Махачкала|Makhachkala|Россия|Russia|42.98|47.50|ru3
+Томск|Tomsk|Россия|Russia|56.49|84.95|ru7
+Оренбург|Orenburg|Россия|Russia|51.77|55.10|ru5
+Кемерово|Kemerovo|Россия|Russia|55.36|86.09|ru7
+Новокузнецк|Novokuznetsk|Россия|Russia|53.76|87.11|ru7
+Рязань|Ryazan|Россия|Russia|54.63|39.74|ru3
+Астрахань|Astrakhan|Россия|Russia|46.35|48.04|ru4
+Набережные Челны|Naberezhnye Chelny|Россия|Russia|55.74|52.40|ru3
+Пенза|Penza|Россия|Russia|53.20|45.00|ru3
+Липецк|Lipetsk|Россия|Russia|52.61|39.60|ru3
+Киров|Kirov|Россия|Russia|58.60|49.66|ru3
+Чебоксары|Cheboksary|Россия|Russia|56.13|47.25|ru3
+Тула|Tula|Россия|Russia|54.19|37.62|ru3
+Калининград|Kaliningrad|Россия|Russia|54.71|20.51|ru2
+Курск|Kursk|Россия|Russia|51.73|36.19|ru3
+Ставрополь|Stavropol|Россия|Russia|45.04|41.97|ru3
+Улан-Удэ|Ulan-Ude|Россия|Russia|51.83|107.58|ru8
+Тверь|Tver|Россия|Russia|56.86|35.91|ru3
+Магнитогорск|Magnitogorsk|Россия|Russia|53.41|58.98|ru5
+Сочи|Sochi|Россия|Russia|43.60|39.73|ru3
+Иваново|Ivanovo|Россия|Russia|57.00|40.97|ru3
+Брянск|Bryansk|Россия|Russia|53.24|34.36|ru3
+Белгород|Belgorod|Россия|Russia|50.60|36.58|ru3
+Сургут|Surgut|Россия|Russia|61.25|73.42|ru5
+Владимир|Vladimir|Россия|Russia|56.13|40.40|ru3
+Чита|Chita|Россия|Russia|52.03|113.50|ru9
+Нижний Тагил|Nizhny Tagil|Россия|Russia|57.92|59.96|ru5
+Архангельск|Arkhangelsk|Россия|Russia|64.54|40.54|ru3
+Калуга|Kaluga|Россия|Russia|54.51|36.26|ru3
+Смоленск|Smolensk|Россия|Russia|54.78|32.05|ru3
+Якутск|Yakutsk|Россия|Russia|62.03|129.73|ru9
+Саранск|Saransk|Россия|Russia|54.18|45.18|ru3
+Череповец|Cherepovets|Россия|Russia|59.13|37.90|ru3
+Курган|Kurgan|Россия|Russia|55.44|65.34|ru5
+Вологда|Vologda|Россия|Russia|59.22|39.89|ru3
+Орёл|Oryol|Россия|Russia|52.97|36.07|ru3
+Владикавказ|Vladikavkaz|Россия|Russia|43.02|44.68|ru3
+Грозный|Grozny|Россия|Russia|43.31|45.70|ru3
+Мурманск|Murmansk|Россия|Russia|68.97|33.08|ru3
+Тамбов|Tambov|Россия|Russia|52.72|41.45|ru3
+Петрозаводск|Petrozavodsk|Россия|Russia|61.79|34.36|ru3
+Нижневартовск|Nizhnevartovsk|Россия|Russia|60.94|76.57|ru5
+Кострома|Kostroma|Россия|Russia|57.77|40.93|ru3
+Новороссийск|Novorossiysk|Россия|Russia|44.72|37.77|ru3
+Йошкар-Ола|Yoshkar-Ola|Россия|Russia|56.63|47.89|ru3
+Таганрог|Taganrog|Россия|Russia|47.24|38.90|ru3
+Сыктывкар|Syktyvkar|Россия|Russia|61.67|50.84|ru3
+Нальчик|Nalchik|Россия|Russia|43.49|43.61|ru3
+Дзержинск|Dzerzhinsk|Россия|Russia|56.24|43.46|ru3
+Орск|Orsk|Россия|Russia|51.23|58.47|ru5
+Братск|Bratsk|Россия|Russia|56.15|101.63|ru8
+Ангарск|Angarsk|Россия|Russia|52.54|103.89|ru8
+Благовещенск|Blagoveshchensk|Россия|Russia|50.29|127.53|ru9
+Псков|Pskov|Россия|Russia|57.82|28.33|ru3
+Бийск|Biysk|Россия|Russia|52.54|85.21|ru7
+Южно-Сахалинск|Yuzhno-Sakhalinsk|Россия|Russia|46.96|142.74|ru11
+Абакан|Abakan|Россия|Russia|53.72|91.44|ru7
+Норильск|Norilsk|Россия|Russia|69.35|88.20|ru7
+Магадан|Magadan|Россия|Russia|59.56|150.80|ru11
+Петропавловск-Камчатский|Petropavlovsk-Kamchatsky|Россия|Russia|53.02|158.65|ru12
+Великий Новгород|Veliky Novgorod|Россия|Russia|58.52|31.27|ru3
+Алматы|Almaty|Казахстан|Kazakhstan|43.24|76.95|kz6
+Астана|Astana|Казахстан|Kazakhstan|51.17|71.43|kz6
+Шымкент|Shymkent|Казахстан|Kazakhstan|42.32|69.59|kz6
+Караганда|Karaganda|Казахстан|Kazakhstan|49.80|73.10|kz6
+Актобе|Aktobe|Казахстан|Kazakhstan|50.28|57.17|kz5
+Тараз|Taraz|Казахстан|Kazakhstan|42.90|71.37|kz6
+Павлодар|Pavlodar|Казахстан|Kazakhstan|52.29|76.95|kz6
+Усть-Каменогорск|Oskemen|Казахстан|Kazakhstan|49.95|82.61|kz6
+Семей|Semey|Казахстан|Kazakhstan|50.41|80.25|kz6
+Атырау|Atyrau|Казахстан|Kazakhstan|47.12|51.88|kz5
+Костанай|Kostanay|Казахстан|Kazakhstan|53.21|63.62|kz6
+Кызылорда|Kyzylorda|Казахстан|Kazakhstan|44.85|65.51|kz6
+Уральск|Oral|Казахстан|Kazakhstan|51.23|51.37|kz5
+Петропавловск|Petropavl|Казахстан|Kazakhstan|54.87|69.14|kz6
+Актау|Aktau|Казахстан|Kazakhstan|43.65|51.16|kz5
+Темиртау|Temirtau|Казахстан|Kazakhstan|50.06|72.96|kz6
+Кокшетау|Kokshetau|Казахстан|Kazakhstan|53.28|69.39|kz6
+Киев|Kyiv|Украина|Ukraine|50.45|30.52|ua
+Харьков|Kharkiv|Украина|Ukraine|49.99|36.23|ua
+Одесса|Odesa|Украина|Ukraine|46.48|30.73|ua
+Днепр|Dnipro|Украина|Ukraine|48.46|35.04|ua
+Донецк|Donetsk|Украина|Ukraine|48.00|37.80|ua
+Запорожье|Zaporizhzhia|Украина|Ukraine|47.84|35.14|ua
+Львов|Lviv|Украина|Ukraine|49.84|24.03|ua
+Кривой Рог|Kryvyi Rih|Украина|Ukraine|47.91|33.39|ua
+Николаев|Mykolaiv|Украина|Ukraine|46.97|32.00|ua
+Мариуполь|Mariupol|Украина|Ukraine|47.10|37.55|ua
+Луганск|Luhansk|Украина|Ukraine|48.57|39.31|ua
+Винница|Vinnytsia|Украина|Ukraine|49.23|28.47|ua
+Херсон|Kherson|Украина|Ukraine|46.64|32.61|ua
+Полтава|Poltava|Украина|Ukraine|49.59|34.55|ua
+Чернигов|Chernihiv|Украина|Ukraine|51.50|31.29|ua
+Черкассы|Cherkasy|Украина|Ukraine|49.44|32.06|ua
+Житомир|Zhytomyr|Украина|Ukraine|50.25|28.66|ua
+Сумы|Sumy|Украина|Ukraine|50.91|34.80|ua
+Черновцы|Chernivtsi|Украина|Ukraine|48.29|25.94|ua
+Ивано-Франковск|Ivano-Frankivsk|Украина|Ukraine|48.92|24.71|ua
+Ужгород|Uzhhorod|Украина|Ukraine|48.62|22.30|ua
+Минск|Minsk|Беларусь|Belarus|53.90|27.57|by
+Гомель|Gomel|Беларусь|Belarus|52.44|30.98|by
+Могилёв|Mogilev|Беларусь|Belarus|53.90|30.33|by
+Витебск|Vitebsk|Беларусь|Belarus|55.19|30.20|by
+Гродно|Grodno|Беларусь|Belarus|53.68|23.83|by
+Брест|Brest|Беларусь|Belarus|52.10|23.70|by
+Ташкент|Tashkent|Узбекистан|Uzbekistan|41.31|69.28|f5
+Самарканд|Samarkand|Узбекистан|Uzbekistan|39.65|66.96|f5
+Бухара|Bukhara|Узбекистан|Uzbekistan|39.77|64.43|f5
+Фергана|Fergana|Узбекистан|Uzbekistan|40.39|71.79|f5
+Бишкек|Bishkek|Кыргызстан|Kyrgyzstan|42.87|74.59|f6
+Ош|Osh|Кыргызстан|Kyrgyzstan|40.53|72.80|f6
+Душанбе|Dushanbe|Таджикистан|Tajikistan|38.56|68.79|f5
+Ашхабад|Ashgabat|Туркменистан|Turkmenistan|37.95|58.38|f5
+Баку|Baku|Азербайджан|Azerbaijan|40.41|49.87|f4
+Гянджа|Ganja|Азербайджан|Azerbaijan|40.68|46.36|f4
+Ереван|Yerevan|Армения|Armenia|40.18|44.51|f4
+Гюмри|Gyumri|Армения|Armenia|40.79|43.85|f4
+Тбилиси|Tbilisi|Грузия|Georgia|41.72|44.78|f4
+Батуми|Batumi|Грузия|Georgia|41.65|41.64|f4
+Кишинёв|Chisinau|Молдова|Moldova|47.01|28.86|eu2
+Рига|Riga|Латвия|Latvia|56.95|24.11|eu2
+Вильнюс|Vilnius|Литва|Lithuania|54.69|25.28|eu2
+Каунас|Kaunas|Литва|Lithuania|54.90|23.91|eu2
+Таллин|Tallinn|Эстония|Estonia|59.44|24.75|eu2
+Лондон|London|Великобритания|United Kingdom|51.51|-0.13|uk
+Манчестер|Manchester|Великобритания|United Kingdom|53.48|-2.24|uk
+Эдинбург|Edinburgh|Великобритания|United Kingdom|55.95|-3.19|uk
+Париж|Paris|Франция|France|48.86|2.35|eu1
+Ницца|Nice|Франция|France|43.70|7.27|eu1
+Берлин|Berlin|Германия|Germany|52.52|13.40|eu1
+Мюнхен|Munich|Германия|Germany|48.14|11.58|eu1
+Гамбург|Hamburg|Германия|Germany|53.55|9.99|eu1
+Франкфурт|Frankfurt|Германия|Germany|50.11|8.68|eu1
+Кёльн|Cologne|Германия|Germany|50.94|6.96|eu1
+Мадрид|Madrid|Испания|Spain|40.42|-3.70|eu1
+Барселона|Barcelona|Испания|Spain|41.39|2.17|eu1
+Рим|Rome|Италия|Italy|41.90|12.50|eu1
+Милан|Milan|Италия|Italy|45.46|9.19|eu1
+Амстердам|Amsterdam|Нидерланды|Netherlands|52.37|4.90|eu1
+Брюссель|Brussels|Бельгия|Belgium|50.85|4.35|eu1
+Вена|Vienna|Австрия|Austria|48.21|16.37|eu1
+Цюрих|Zurich|Швейцария|Switzerland|47.38|8.54|eu1
+Женева|Geneva|Швейцария|Switzerland|46.20|6.14|eu1
+Прага|Prague|Чехия|Czechia|50.08|14.44|eu1
+Варшава|Warsaw|Польша|Poland|52.23|21.01|eu1
+Краков|Krakow|Польша|Poland|50.06|19.94|eu1
+Будапешт|Budapest|Венгрия|Hungary|47.50|19.04|eu1
+Бухарест|Bucharest|Румыния|Romania|44.43|26.10|eu2
+София|Sofia|Болгария|Bulgaria|42.70|23.32|eu2
+Белград|Belgrade|Сербия|Serbia|44.79|20.45|eu1
+Загреб|Zagreb|Хорватия|Croatia|45.81|15.98|eu1
+Афины|Athens|Греция|Greece|37.98|23.73|eu2
+Стамбул|Istanbul|Турция|Turkey|41.01|28.98|tr
+Анкара|Ankara|Турция|Turkey|39.93|32.86|tr
+Анталья|Antalya|Турция|Turkey|36.90|30.70|tr
+Лиссабон|Lisbon|Португалия|Portugal|38.72|-9.14|uk
+Дублин|Dublin|Ирландия|Ireland|53.35|-6.26|uk
+Стокгольм|Stockholm|Швеция|Sweden|59.33|18.07|eu1
+Осло|Oslo|Норвегия|Norway|59.91|10.75|eu1
+Копенгаген|Copenhagen|Дания|Denmark|55.68|12.57|eu1
+Хельсинки|Helsinki|Финляндия|Finland|60.17|24.94|eu2
+Рейкьявик|Reykjavik|Исландия|Iceland|64.15|-21.94|f0
+Никосия|Nicosia|Кипр|Cyprus|35.19|33.38|eu2
+Лимассол|Limassol|Кипр|Cyprus|34.71|33.02|eu2
+Тель-Авив|Tel Aviv|Израиль|Israel|32.09|34.78|il
+Иерусалим|Jerusalem|Израиль|Israel|31.77|35.22|il
+Хайфа|Haifa|Израиль|Israel|32.79|34.99|il
+Дубай|Dubai|ОАЭ|UAE|25.20|55.27|f4
+Абу-Даби|Abu Dhabi|ОАЭ|UAE|24.45|54.38|f4
+Доха|Doha|Катар|Qatar|25.29|51.53|f3
+Эр-Рияд|Riyadh|Саудовская Аравия|Saudi Arabia|24.71|46.68|f3
+Тегеран|Tehran|Иран|Iran|35.69|51.39|f3.5
+Багдад|Baghdad|Ирак|Iraq|33.31|44.37|f3
+Бейрут|Beirut|Ливан|Lebanon|33.89|35.50|eu2
+Каир|Cairo|Египет|Egypt|30.04|31.24|f2
+Касабланка|Casablanca|Марокко|Morocco|33.57|-7.59|f1
+Найроби|Nairobi|Кения|Kenya|-1.29|36.82|f3
+Йоханнесбург|Johannesburg|ЮАР|South Africa|-26.20|28.05|f2
+Кейптаун|Cape Town|ЮАР|South Africa|-33.92|18.42|f2
+Дели|Delhi|Индия|India|28.61|77.21|f5.5
+Мумбаи|Mumbai|Индия|India|19.08|72.88|f5.5
+Бангалор|Bengaluru|Индия|India|12.97|77.59|f5.5
+Ченнаи|Chennai|Индия|India|13.08|80.27|f5.5
+Колката|Kolkata|Индия|India|22.57|88.36|f5.5
+Джайпур|Jaipur|Индия|India|26.91|75.79|f5.5
+Варанаси|Varanasi|Индия|India|25.32|82.99|f5.5
+Ришикеш|Rishikesh|Индия|India|30.09|78.27|f5.5
+Гоа|Goa (Panaji)|Индия|India|15.49|73.83|f5.5
+Катманду|Kathmandu|Непал|Nepal|27.72|85.32|f5.75
+Коломбо|Colombo|Шри-Ланка|Sri Lanka|6.93|79.85|f5.5
+Дакка|Dhaka|Бангладеш|Bangladesh|23.81|90.41|f6
+Карачи|Karachi|Пакистан|Pakistan|24.86|67.01|f5
+Лахор|Lahore|Пакистан|Pakistan|31.55|74.34|f5
+Кабул|Kabul|Афганистан|Afghanistan|34.53|69.17|f4.5
+Пекин|Beijing|Китай|China|39.90|116.41|f8
+Шанхай|Shanghai|Китай|China|31.23|121.47|f8
+Гонконг|Hong Kong|Гонконг|Hong Kong|22.32|114.17|f8
+Тайбэй|Taipei|Тайвань|Taiwan|25.03|121.57|f8
+Токио|Tokyo|Япония|Japan|35.68|139.69|f9
+Осака|Osaka|Япония|Japan|34.69|135.50|f9
+Сеул|Seoul|Южная Корея|South Korea|37.57|126.98|f9
+Бангкок|Bangkok|Таиланд|Thailand|13.76|100.50|f7
+Пхукет|Phuket|Таиланд|Thailand|7.88|98.39|f7
+Ханой|Hanoi|Вьетнам|Vietnam|21.03|105.85|f7
+Хошимин|Ho Chi Minh City|Вьетнам|Vietnam|10.82|106.63|f7
+Куала-Лумпур|Kuala Lumpur|Малайзия|Malaysia|3.14|101.69|f8
+Сингапур|Singapore|Сингапур|Singapore|1.35|103.82|f8
+Джакарта|Jakarta|Индонезия|Indonesia|-6.21|106.85|f7
+Денпасар|Denpasar (Bali)|Индонезия|Indonesia|-8.65|115.22|f8
+Манила|Manila|Филиппины|Philippines|14.60|120.98|f8
+Улан-Батор|Ulaanbaatar|Монголия|Mongolia|47.89|106.91|f8
+Сидней|Sydney|Австралия|Australia|-33.87|151.21|au
+Мельбурн|Melbourne|Австралия|Australia|-37.81|144.96|au
+Брисбен|Brisbane|Австралия|Australia|-27.47|153.03|f10
+Перт|Perth|Австралия|Australia|-31.95|115.86|f8
+Окленд|Auckland|Новая Зеландия|New Zealand|-36.85|174.76|nz
+Нью-Йорк|New York|США|USA|40.71|-74.01|usE
+Лос-Анджелес|Los Angeles|США|USA|34.05|-118.24|usP
+Чикаго|Chicago|США|USA|41.88|-87.63|usC
+Хьюстон|Houston|США|USA|29.76|-95.37|usC
+Финикс|Phoenix|США|USA|33.45|-112.07|f-7
+Филадельфия|Philadelphia|США|USA|39.95|-75.17|usE
+Сан-Франциско|San Francisco|США|USA|37.77|-122.42|usP
+Сан-Диего|San Diego|США|USA|32.72|-117.16|usP
+Сиэтл|Seattle|США|USA|47.61|-122.33|usP
+Бостон|Boston|США|USA|42.36|-71.06|usE
+Майами|Miami|США|USA|25.76|-80.19|usE
+Атланта|Atlanta|США|USA|33.75|-84.39|usE
+Вашингтон|Washington D.C.|США|USA|38.91|-77.04|usE
+Денвер|Denver|США|USA|39.74|-104.99|usM
+Лас-Вегас|Las Vegas|США|USA|36.17|-115.14|usP
+Даллас|Dallas|США|USA|32.78|-96.80|usC
+Остин|Austin|США|USA|30.27|-97.74|usC
+Торонто|Toronto|Канада|Canada|43.65|-79.38|usE
+Ванкувер|Vancouver|Канада|Canada|49.28|-123.12|usP
+Монреаль|Montreal|Канада|Canada|45.50|-73.57|usE
+Мехико|Mexico City|Мексика|Mexico|19.43|-99.13|f-6
+Гавана|Havana|Куба|Cuba|23.11|-82.37|usE
+Богота|Bogota|Колумбия|Colombia|4.71|-74.07|f-5
+Лима|Lima|Перу|Peru|-12.05|-77.04|f-5
+Сантьяго|Santiago|Чили|Chile|-33.45|-70.67|cl
+Буэнос-Айрес|Buenos Aires|Аргентина|Argentina|-34.60|-58.38|f-3
+Сан-Паулу|Sao Paulo|Бразилия|Brazil|-23.55|-46.63|f-3
+Рио-де-Жанейро|Rio de Janeiro|Бразилия|Brazil|-22.91|-43.17|f-3`;
+const CITIES = CITY_RAW.split("\n").map((l) => {
+    const [ru, en, cru, cen, lat, lon, z] = l.split("|");
+    return { ru, en, cru, cen, lat: parseFloat(lat), lon: parseFloat(lon), z };
+});
+/* Часовой пояс по зоне и дате (историческое приближение; продакшен: IANA tzdata) */
+function zoneOffset(z, y, mo) {
+    if (z.startsWith("f"))
+        return parseFloat(z.slice(1)); // фиксированные
+    const summerN = mo >= 4 && mo <= 10, summerS = mo <= 3 || mo >= 10;
+    const ussrDst = (base) => {
+        if (y < 1981)
+            return base;
+        if (y <= 1995)
+            return base + (mo >= 4 && mo <= 9 ? 1 : 0);
+        if (y <= 2010)
+            return base + (summerN ? 1 : 0);
+        return base;
+    };
+    if (z.startsWith("ru")) {
+        const base = parseFloat(z.slice(2));
+        if (y >= 2011 && (y < 2014 || (y === 2014 && mo < 11)))
+            return base + ((y > 2011 || mo >= 4) ? 1 : 0); // 2011–2014: постоянное +1
+        return ussrDst(base);
+    }
+    if (z.startsWith("kz")) {
+        let base = parseFloat(z.slice(2));
+        if (y >= 2024)
+            return 5; // единый пояс Казахстана
+        if (y >= 2005)
+            return base;
+        return ussrDst(base);
+    }
+    if (z === "ua")
+        return y <= 1991 ? ussrDst(3) : 2 + (summerN ? 1 : 0);
+    if (z === "by") {
+        if (y <= 1991)
+            return ussrDst(3);
+        if (y <= 2010)
+            return 2 + (summerN ? 1 : 0);
+        return 3;
+    }
+    if (z === "eu1")
+        return 1 + (summerN ? 1 : 0);
+    if (z === "eu2")
+        return 2 + (summerN ? 1 : 0);
+    if (z === "uk")
+        return 0 + (summerN ? 1 : 0);
+    if (z === "tr")
+        return y >= 2017 ? 3 : 2 + (summerN ? 1 : 0);
+    if (z === "il")
+        return 2 + (mo >= 4 && mo <= 9 ? 1 : 0);
+    if (z === "usE")
+        return -5 + (summerN ? 1 : 0);
+    if (z === "usC")
+        return -6 + (summerN ? 1 : 0);
+    if (z === "usM")
+        return -7 + (summerN ? 1 : 0);
+    if (z === "usP")
+        return -8 + (summerN ? 1 : 0);
+    if (z === "au")
+        return 10 + (summerS ? 1 : 0);
+    if (z === "nz")
+        return 12 + (summerS ? 1 : 0);
+    if (z === "cl")
+        return -4 + (summerS ? 1 : 0);
+    return 0;
+}
+const EXALT = { Sun: 0, Moon: 1, Mars: 9, Mercury: 5, Jupiter: 3, Venus: 11, Saturn: 6 };
+const DEBIL = { Sun: 6, Moon: 7, Mars: 3, Mercury: 11, Jupiter: 9, Venus: 5, Saturn: 0 };
+const OWN = { Sun: [4], Moon: [3], Mars: [0, 7], Mercury: [2, 5], Jupiter: [8, 11], Venus: [1, 6], Saturn: [9, 10] };
+const COMBUST_ORB = { Moon: 12, Mars: 17, Mercury: 14, Jupiter: 11, Venus: 10, Saturn: 15 };
+const DASHA_SEQ = [["Ketu", 7], ["Venus", 20], ["Sun", 6], ["Moon", 10], ["Mars", 7], ["Rahu", 18], ["Jupiter", 16], ["Saturn", 19], ["Mercury", 17]];
+function subDashas(lord, start, end) {
+    const span = end - start, si = DASHA_SEQ.findIndex((x) => x[0] === lord);
+    const out = [];
+    let t = start;
+    for (let i = 0; i < 9; i++) {
+        const [l, y] = DASHA_SEQ[(si + i) % 9];
+        const d = span * y / 120;
+        out.push({ lord: l, start: t, end: t + d });
+        t += d;
+    }
+    return out;
+}
+const KARAKA = { ru: ["АК", "АмК", "БК", "МК", "ПК", "ГК", "ДК"], en: ["AK", "AmK", "BK", "MK", "PK", "GK", "DK"] };
+const navamshaSign = (lon) => Math.floor(norm(lon) / (10 / 3)) % 12;
+function dignity(pl, sign) {
+    if (EXALT[pl] === sign)
+        return "ex";
+    if (DEBIL[pl] === sign)
+        return "de";
+    if ((OWN[pl] || []).includes(sign))
+        return "own";
+    return null;
+}
+function junction(lon) {
+    const d = lon % 30, sign = Math.floor(lon / 30);
+    const water = [3, 7, 11].includes(sign), fire = [0, 4, 8].includes(sign);
+    if (d > 29.2 && water)
+        return "gandanta";
+    if (d < 0.8 && fire)
+        return "gandanta";
+    if (d > 29.0 || d < 1.0)
+        return "sandhi";
+    return null;
+}
+function computeAll(inp) {
+    const jd = jdFrom(inp.y, inp.mo, inp.d, inp.h, inp.mi, inp.tz);
+    const T = (jd - 2451545) / 36525, ay = lahiri(jd);
+    const sid = (x) => norm(x - ay);
+    const tropAsc = ascendant(jd, inp.lat, inp.lon);
+    const asc = sid(tropAsc);
+    const lons = {
+        Sun: sid(sunLon(T)), Moon: sid(moonLon(T)),
+        Mars: sid(planetLon("Mars", T)), Mercury: sid(planetLon("Mercury", T)),
+        Jupiter: sid(planetLon("Jupiter", T)), Venus: sid(planetLon("Venus", T)),
+        Saturn: sid(planetLon("Saturn", T)), Rahu: sid(meanNode(T)),
+    };
+    lons.Ketu = norm(lons.Rahu + 180);
+    const T2 = T + 1 / 36525;
+    const speed = {
+        Sun: 1, Moon: 1, Rahu: -1, Ketu: -1,
+        Mars: ((planetLon("Mars", T2) - planetLon("Mars", T) + 540) % 360) - 180,
+        Mercury: ((planetLon("Mercury", T2) - planetLon("Mercury", T) + 540) % 360) - 180,
+        Jupiter: ((planetLon("Jupiter", T2) - planetLon("Jupiter", T) + 540) % 360) - 180,
+        Venus: ((planetLon("Venus", T2) - planetLon("Venus", T) + 540) % 360) - 180,
+        Saturn: ((planetLon("Saturn", T2) - planetLon("Saturn", T) + 540) % 360) - 180,
+    };
+    const ascSign = Math.floor(asc / 30);
+    const planets = PL_ORDER.map((k) => {
+        const lon = lons[k], sign = Math.floor(lon / 30), deg = lon % 30;
+        const nk = Math.floor(lon / (40 / 3)), pada = Math.floor((lon % (40 / 3)) / (10 / 3)) + 1;
+        const distSun = Math.abs(((lon - lons.Sun + 540) % 360) - 180);
+        return {
+            key: k, lon, sign, deg, nak: nk, pada,
+            retro: k !== "Sun" && k !== "Moon" && speed[k] < 0,
+            dig: dignity(k, sign),
+            combust: k !== "Sun" && COMBUST_ORB[k] ? distSun < COMBUST_ORB[k] : false,
+            junc: junction(lon),
+            d9sign: navamshaSign(lon),
+            house: ((sign - ascSign) + 12) % 12 + 1,
+            houseFromMoon: ((sign - Math.floor(lons.Moon / 30)) + 12) % 12 + 1,
+            rules: SIGN_LORD.map((l, i) => l === k ? ((i - ascSign) + 12) % 12 + 1 : null).filter(Boolean),
+        };
+    });
+    planets.forEach((p) => { p.vargottama = p.sign === p.d9sign; });
+    // Отношение к диспозитору (естественная + временная дружба) и аспекты
+    const signOf = Object.fromEntries(planets.map((p) => [p.key, p.sign]));
+    const compound = (a, b) => {
+        if (a === b)
+            return "own";
+        const nat = (NAT[a]?.f || []).includes(b) ? 1 : (NAT[a]?.e || []).includes(b) ? -1 : 0;
+        const dist = ((signOf[b] - signOf[a]) + 12) % 12 + 1;
+        const tmp = [2, 3, 4, 10, 11, 12].includes(dist) ? 1 : -1;
+        return String(nat + tmp);
+    };
+    planets.forEach((p) => {
+        const disp = SIGN_LORD[p.sign];
+        p.relation = ["Rahu", "Ketu"].includes(p.key) ? null : compound(p.key, disp);
+        p.dispositor = disp;
+        const off = ASPECT_OFF[p.key] || [7];
+        p.aspects = off.map((o) => ((p.house - 1 + o - 1) % 12) + 1);
+    });
+    // Чара-караки (7 планет по убыванию градуса в знаке)
+    const kOrder = planets.filter((p) => !["Rahu", "Ketu"].includes(p.key)).slice().sort((a, b) => b.deg - a.deg);
+    kOrder.forEach((p, i) => { p.karaka = i; });
+    // Вимшоттари
+    const mLon = lons.Moon, nk = Math.floor(mLon / (40 / 3));
+    const frac = (mLon % (40 / 3)) / (40 / 3);
+    const startIdx = nk % 9;
+    const dashas = [];
+    let t = jd - frac * DASHA_SEQ[startIdx][1] * 365.25;
+    for (let i = 0; i < 9; i++) {
+        const [lord, yrs] = DASHA_SEQ[(startIdx + i) % 9];
+        const t0 = Math.max(t, jd), t1 = t + yrs * 365.25;
+        if (t1 > jd) {
+            const antars = [];
+            let ta = t;
+            for (let j = 0; j < 9; j++) {
+                const [al, ay2] = DASHA_SEQ[(startIdx + i + j) % 9];
+                const dur = yrs * ay2 / 120 * 365.25;
+                if (ta + dur > jd)
+                    antars.push({ lord: al, start: Math.max(ta, jd), end: ta + dur });
+                ta += dur;
+            }
+            dashas.push({ lord, start: t0, end: t1, antars });
+        }
+        t = t + yrs * 365.25;
+        if (dashas.length && t > jd + 120 * 365.25)
+            break;
+    }
+    // Саде Сати
+    const moonSign = Math.floor(mLon / 30);
+    const sade = [];
+    let inS = false, s0 = 0;
+    for (let dd = 0; dd <= 100 * 365.25; dd += 10) {
+        const Ts = (jd + dd - 2451545) / 36525;
+        const satSign = Math.floor(norm(planetLon("Saturn", Ts) - lahiri(jd + dd)) / 30);
+        const near = [((moonSign + 11) % 12), moonSign, ((moonSign + 1) % 12)].includes(satSign);
+        if (near && !inS) {
+            inS = true;
+            s0 = jd + dd;
+        }
+        if (!near && inS) {
+            inS = false;
+            sade.push({ start: s0, end: jd + dd });
+        }
+    }
+    return { jd, ay, asc, ascSign, planets, dashas, sade, moonSign, lons };
+}
+/* ============================================================
+   ПАКЕТ «ТРИ ТОЧКИ» (методика Оли, 3×12 правил)
+============================================================ */
+const P3 = {
+    lm: { t: { ru: "Лагна → Луна", en: "Lagna → Moon" }, q: { ru: "Как душа проживает данность тела и личности", en: "How the soul lives the given body & personality" },
+        v: [
+            { ru: "Душа и личность слиты: эмоциональная выразительность, восприимчивость, настроение напрямую влияет на самоощущение. Задача — эмоциональная устойчивость.", en: "Soul and persona fused: expressive, receptive; moods shape self-image. Task: emotional steadiness." },
+            { ru: "Эмоции связаны с речью, семьёй, ресурсами; душевный комфорт зависит от стабильности. Возможен дар слова, поэзии, пения.", en: "Feelings tied to speech, family, resources; comfort needs stability. Gift of voice possible." },
+            { ru: "Душа активна и любознательна, живёт общением, обучением, движением. Ум подвижен, важен здоровый выход ментальной энергии.", en: "Curious, communicative soul; mobile mind needs healthy mental outlets." },
+            { ru: "Душа укоренена в доме, матери, эмоциональной безопасности. Сильная потребность в опоре и уюте; риск ностальгии и привязанности к прошлому.", en: "Soul rooted in home, mother, security; risk of clinging to the past." },
+            { ru: "Душа расцветает в творчестве, любви, игре, детях. Интуитивный, романтичный ум; радость — через созидание.", en: "Soul blooms through creativity, love, play, children; intuitive romantic mind." },
+            { ru: "Душа проживает беспокойство, служение, преодоление. Ум склонен к критике и тревоге о деталях; комфорт — через помощь и порядок.", en: "Soul lives through service and overcoming; anxious critical mind finds peace in helping." },
+            { ru: "Душа ищет себя в партнёрстве и балансе; риск эмоциональной зависимости от отношений. Дипломатичный ум.", en: "Soul seeks itself in partnership; risk of emotional dependency on relationships." },
+            { ru: "Душа обращена к глубинам: трансформации, тайны, кризисы. Интенсивные скрытые эмоции; комфорт — через принятие перемен и психологическую работу.", en: "Soul faces depths: transformation, crises; intense hidden feelings; growth via accepting change." },
+            { ru: "Ум устремлён к мудрости, вере, смыслу, дальним горизонтам. Оптимизм, связь с учителями; комфорт — в расширении картины мира.", en: "Mind seeks wisdom, faith, meaning; optimism, teachers, expanding horizons." },
+            { ru: "Душа сплетена с делом, статусом, целями. Удовлетворение — из достижений; важен баланс работы и личного.", en: "Soul woven into career and goals; satisfaction via achievement; balance needed." },
+            { ru: "Душа живёт в кругу друзей, идей, коллективных целей. Прогрессивный ум, ориентированный в будущее.", en: "Soul thrives among friends, ideas, collective goals; future-oriented mind." },
+            { ru: "Душа тонкая, интровертная, нуждается в уединении и духовной подпитке. Комфорт — через сострадание, медитацию, искусство.", en: "Sensitive introvert soul; needs solitude, spirit, art, compassion." }
+        ] },
+    ls: { t: { ru: "Лагна → Солнце", en: "Lagna → Sun" }, q: { ru: "Как воля и дух действуют через личность", en: "How will & spirit act through the persona" },
+        v: [
+            { ru: "Воля и личность едины: харизма, жизненная сила, лидерство. Задача — не скатиться в эгоцентризм.", en: "Will and persona united: charisma, vitality, leadership; beware egocentrism." },
+            { ru: "Воля направлена на ценности, речь, семью, ресурсы. Авторитетная убедительная речь; опора на традицию.", en: "Will aimed at values, speech, family wealth; authoritative voice." },
+            { ru: "Воля проявляется через смелость, инициативу, общение. Самоутверждение действием и словом.", en: "Will shows through courage, initiative, communication." },
+            { ru: "Воля строит фундамент: дом, семья, корни. Авторитет в своём доме; важно не быть авторитарным с близкими.", en: "Will builds foundations: home, family, roots; avoid domestic authoritarianism." },
+            { ru: "Творческая воля: самовыражение, дети, признание уникальности. Стремление оставить след.", en: "Creative will: self-expression, children, urge to leave a mark." },
+            { ru: "Воля закалена преодолением: борьба, служение, решение проблем. Много усилий — большая выносливость духа.", en: "Will forged by overcoming: struggle, service; great endurance." },
+            { ru: "Воля фокусируется в партнёрстве и публичном взаимодействии; успех через сотрудничество. Риск борьбы за власть в отношениях.", en: "Will focused in partnership; success via cooperation; beware power struggles." },
+            { ru: "Воля проходит через трансформации и кризисы; скрытая сила, которая раскрывается после испытаний.", en: "Will passes through crises; hidden power revealed by trials." },
+            { ru: "Воля в согласии с Дхармой: истина, вера, учительство, дальние горизонты. Сильное, удачливое положение.", en: "Will aligned with Dharma: truth, faith, teaching; strong fortunate placement." },
+            { ru: "Пиковое положение воли: карьера, статус, признание, долг. Лидерство и ответственность.", en: "Peak of will: career, status, recognition, duty; leadership." },
+            { ru: "Воля работает на мечты, круг единомышленников, социальные цели. Лидер среди равных.", en: "Will serves dreams, allies, social goals; leader among peers." },
+            { ru: "Воля обращена внутрь: уединение, духовность, работа за кулисами. Задача — здоровое выражение силы, испытание эго.", en: "Will turned inward: solitude, spirit, backstage work; ego trials." }
+        ] },
+    sm: { t: { ru: "Солнце → Луна", en: "Sun → Moon" }, q: { ru: "Как чувства взаимодействуют с волей", en: "How feelings interact with will" },
+        v: [
+            { ru: "Новолуние: чувства и воля переплетены — хочу то, что чувствую. Сильная интуиция; риск эмоционального эго.", en: "New-moon fusion: feel what you want, want what you feel; strong intuition, emotional ego risk." },
+            { ru: "Эмоции поддерживают ценности и ресурсы воли; комфорт зависит от материального успеха целей.", en: "Feelings back the will's values and resources." },
+            { ru: "Эмоции питают волю через общение, любопытство, движение.", en: "Feelings feed will via communication and curiosity." },
+            { ru: "Душевные силы для действий — из дома и эмоциональной базы. Опора воли — семья.", en: "Emotional base at home powers the will." },
+            { ru: "Чувства вдохновлены волей: радость самовыражения, творческий союз ума и цели.", en: "Feelings inspired by will: joyful creative union of mind and goal." },
+            { ru: "Чувства вовлечены в тревогу о пути воли: ум видит проблемы и детали. Работа с беспокойством обязательна.", en: "Feelings anxious about the will's path; work with worry." },
+            { ru: "Полнолуние: чувства ищут баланса и отражения воли в других. Пик осознанности; риск зависимости от партнёров по целям.", en: "Full-moon axis: feelings seek mirror of will in others; peak awareness, dependency risk." },
+            { ru: "Чувства сталкиваются с кризисами воли: подсознательные страхи влияют на мотивы. Нужна интеграция глубин.", en: "Feelings meet the will's crises; subconscious fears shape motives." },
+            { ru: "Чувства окрыляют волю смыслом: ум видит большую картину, действия связаны с Дхармой.", en: "Feelings uplift will with meaning; mind sees the big picture." },
+            { ru: "Эмоции вложены в статус и результат воли; удовлетворение — через признание действий.", en: "Emotions invested in the will's status and results." },
+            { ru: "Чувства, мечты и друзья вдохновляют волю; радость совместных достижений.", en: "Feelings, dreams and friends inspire the will." },
+            { ru: "Чувства скрыты от воли: возможен внутренний саботаж целей или потребность отступать и восстанавливаться. Осознанность обязательна.", en: "Feelings hidden from will: inner sabotage or retreat; awareness needed." }
+        ] },
+};
+const DUSTHANA = [6, 8, 12], TRIKONA = [1, 5, 9], KENDRA = [1, 4, 7, 10], UPACHAYA = [3, 6, 10, 11];
+/* Метаданные накшатр: символ, божество, тема (по схеме «Паспорта») */
+const NAK_META = [
+    ["голова коня", "Ашвины-целители", "стремительный старт и дар исцеления", "swift start & healing"],
+    ["йони", "Яма", "вынашивание, труд рождения, знание пределов", "gestation & thresholds"],
+    ["нож и пламя", "Агни", "очищение резкостью, отсечение лишнего", "purifying fire"],
+    ["колесница, бык", "Праджапати", "рост, чувственное изобилие, магнетизм", "growth & magnetism"],
+    ["голова оленя", "Сома", "вечный поиск, неутолённое любопытство", "the eternal seeker"],
+    ["слеза и алмаз", "Рудра", "трансформация через бурю: шторм, который очищает", "storm that cleanses"],
+    ["лук и колчан", "Адити", "возвращение света, второе дыхание, восстановление", "return of light"],
+    ["цветок, вымя коровы", "Брихаспати", "питание, забота, наставничество", "nourishment & guidance"],
+    ["свернувшаяся змея", "Наги", "гипнотическая глубина, проникновение в скрытое", "hypnotic depth"],
+    ["трон, паланкин", "Питры (предки)", "наследие рода, достоинство власти", "ancestral throne"],
+    ["очаг, гамак", "Бхага", "наслаждение, творческий отдых, обаяние", "creative delight"],
+    ["ложе", "Арьяман", "договор, покровительство, верность слову", "patronage & loyalty"],
+    ["ладонь", "Савитар", "мастерство рук, ловкость, точное ремесло", "skill of the hand"],
+    ["самоцвет", "Вишвакарма", "создание формы, архитектура красоты", "the jewel-maker"],
+    ["росток на ветру", "Ваю", "независимость, гибкость, самостояние", "independent wind"],
+    ["триумфальная арка", "Индра и Агни", "целеустремлённость, победа через фокус", "focused victory"],
+    ["лотос", "Митра", "дружба, преданность, сила союза", "devoted alliance"],
+    ["амулет, зонт", "Индра", "старшинство, ноша защитника", "the elder's burden"],
+    ["связка корней", "Ниррити", "корчевание: докопаться до сути, обнулить лишнее", "uprooting to the core"],
+    ["веер, сито", "Апас", "непобедимый напор, воодушевление", "invincible surge"],
+    ["бивень слона", "Вишведевы", "поздняя, но окончательная победа, устои", "final victory"],
+    ["ухо, три следа", "Вишну", "слушание: знание приходит через слышание", "sacred listening"],
+    ["барабан, флейта", "Васу", "ритм, ресурс, слава через дело", "rhythm & renown"],
+    ["пустой круг", "Варуна", "тайна, уединённое целительство, эксцентрика", "the veiled healer"],
+    ["меч, двуликий", "Аджа Экапада", "жар идеи, радикальная философия", "fire of conviction"],
+    ["змей глубин", "Ахир Будхнья", "глубинное спокойствие, мудрая опора", "serpent of the deep"],
+    ["рыба", "Пушан", "проводник, завершение пути, мягкая защита", "the gentle guide"]
+];
+/* Ключ знака — окраска пады (навамши точки) */
+const SIGN_KEY = ["импульс прямого действия", "устойчивость и вкус к жизни", "слово и обмен", "чувство и память",
+    "достоинство и сцена", "точность и служение", "баланс и отношения", "глубина и накал",
+    "смысл и дальний вектор", "структура и цель", "свобода и система", "растворение и сострадание"];
+const SIGN_KEY_EN = ["direct impulse", "steadiness & taste", "word & exchange", "feeling & memory", "dignity & stage",
+    "precision & service", "balance & relating", "depth & intensity", "meaning & direction", "structure & aim", "freedom & systems", "dissolution & compassion"];
+/* Механика классов домов */
+const CLASS_TXT = {
+    kendra: { ru: "Это кендра — несущая опора карты: энергия связи видима, деятельна и требует воплощения в реальных поступках.", en: "A kendra: visible, active energy demanding embodiment." },
+    trikona: { ru: "Это трикона — русло дхармы: связь течёт легко, поддерживается удачей и ощущением «своего» пути.", en: "A trikona: the dharma stream, carried by grace." },
+    dusthana: { ru: "Это дустхана — связь проходит через испытание. Она не сломана: энергия здесь закаляется, и при осознанной работе именно эта связь даёт самый глубокий рост.", en: "A dusthana: the link is tempered by trial — the deepest growth lives here." },
+    upachaya: { ru: "И это упачайя — растущий дом: то, что в юности давалось с трудом, с каждым десятилетием набирает силу и становится преимуществом.", en: "An upachaya: strengthens with age." },
+    neutral: { ru: "Это дом накопления: связь работает не рывком, а приращением — через речь, ресурсы, семейный уклад, набирая вес постепенно.", en: "A house of accrual: the link builds gradually through speech, resources, kin." },
+};
+/* Живые примеры: связь × класс дома */
+const EX_TXT = {
+    lm: { kendra: "Например, такому человеку мало «понимать» свои чувства — ему нужно жить среди них: дом, тело и настроение неразделимы, и переезд или ремонт может лечить душу лучше разговоров.",
+        trikona: "Например, настроение поднимается само, стоит заняться любимым делом — душа и жизнь здесь заодно, и лучшее лекарство от тоски — вернуться к тому, что «моё».",
+        dusthana: "Например, эмоции могут копиться молча и прорываться в кризисы — но именно после таких «штормов» человек чувствует себя очищенным и видит яснее, чем до них.",
+        upachaya: "Например, эмоциональная устойчивость — не данность, а навык: с возрастом такой человек удивляется, насколько спокойнее он проживает то, что в двадцать выбивало из колеи.",
+        neutral: "Например, душе спокойно, когда «закрома полны»: голос, вкусная еда, семейный стол — простые накопительные радости лечат такого человека надёжнее громких событий." },
+    ls: { kendra: "Например, воля такого человека не умеет «в стол»: цели требуют публичного воплощения — проект, должность, сцена, — иначе энергия начинает разъедать изнутри.",
+        trikona: "Например, самые крупные победы приходят, когда человек действует «по совести»: стоит свернуть на чужой сценарий — удача выключается, возвращаешься к своему — двери открываются.",
+        dusthana: "Например, признание может приходить с задержкой или через кризис: увольнение, разрыв, потеря статуса — и именно там обнаруживается настоящая, уже никем не выдаваемая сила.",
+        upachaya: "Например, это биография «позднего цветения»: ровесники стартуют ярче, но после сорока их обгоняет тот, чья воля росла медленно и неотвратимо, как дерево.",
+        neutral: "Например, авторитет такого человека складывается из слова: сказанное им имеет вес, и репутация строится годами последовательной речи и надёжности в ресурсах." },
+    sm: { kendra: "Например, чувства и цели такого человека постоянно смотрят друг на друга: он не может хотеть того, чего не чувствует, — и вынужден строить жизнь, где сердце и дело совпадают.",
+        trikona: "Например, вдохновение здесь — рабочий инструмент: стоит подключить чувство к цели, и продуктивность растёт кратно; без эмоциональной подпитки воля буксует.",
+        dusthana: "Например, человек может саботировать собственные цели, не понимая почему, — пока не спустится к подавленным чувствам: договор ума с сердцем здесь заключается только через глубину.",
+        upachaya: "Например, юношеский разлад «хочу одного — чувствую другое» с годами превращается в редкий дар: зрелое умение выдерживать напряжение между мечтой и настроением.",
+        neutral: "Например, чувства подпитывают волю через накопленное: голос, слово, сбережения — уверенность растёт вместе с ресурсом, и это честная, медленная опора." },
+};
+const SHAKTI_TXT = {
+    kendra: { s: "Шакти: сила воплощения — способность делать внутреннее видимым.", t: "Тень: зависимость от внешней сцены, страх остаться без опор." },
+    trikona: { s: "Шакти: благословение потока — жизнь помогает тому, кто идёт своим путём.", t: "Тень: соблазн лёгкости — талант без дисциплины остаётся обещанием." },
+    dusthana: { s: "Шакти: способность перерождаться через кризис и выходить из него сильнее.", t: "Тень: привычка жить в осаде — искать испытание даже там, где его нет." },
+    upachaya: { s: "Шакти: рост без отката — накопленное здесь не отнимается.", t: "Тень: обесценивание ранних лет — «у меня ничего не получается», сказанное слишком рано." },
+    neutral: { s: "Шакти: способность копить — слово за словом, ресурс за ресурсом.", t: "Тень: мерить связь только накопленным и охранять то, что просит движения." },
+};
+function houseClasses(n) {
+    const c = [];
+    if (DUSTHANA.includes(n))
+        c.push("dusthana");
+    else {
+        if (KENDRA.includes(n))
+            c.push("kendra");
+        if (TRIKONA.includes(n) && n !== 1)
+            c.push("trikona");
+    }
+    if (UPACHAYA.includes(n))
+        c.push("upachaya");
+    if (c.length === 0)
+        c.push("neutral");
+    return c;
+}
+const fmtDeg = (d) => {
+    const dd = Math.floor(d), mm = Math.floor((d - dd) * 60), ss = Math.round(((d - dd) * 60 - mm) * 60);
+    return `${String(dd).padStart(2, "0")}°${String(mm).padStart(2, "0")}'${String(ss).padStart(2, "0")}"`;
+};
+const fmtDate = (jd, lang) => jdToDate(jd).toLocaleDateString(lang === "ru" ? "ru-RU" : "en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
+function statuses(p) {
+    const s = [];
+    if (p.retro)
+        s.push(["R", "#9a86b8"]);
+    if (p.combust)
+        s.push(["C", "#e05d3d"]);
+    if (p.dig === "ex")
+        s.push(["↑", "#e8b64c"]);
+    if (p.dig === "de")
+        s.push(["↓", "#7d9bc4"]);
+    if (p.vargottama)
+        s.push(["V", "#5fb878"]);
+    if (p.junc)
+        s.push(["Г", "#d94f4f"]);
+    return s;
+}
+/* ============================================================
+
+/* ============================================================
+   LOTUS UI · обсерваторная оболочка (тёмная)
+   Подключается ПОСЛЕ движка (тот же файл при сборке).
+============================================================ */
+const MONTHS_RU = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const WD_RAHU = [8, 2, 7, 5, 6, 4, 3], WD_YAMA = [5, 4, 3, 2, 1, 7, 6], WD_GULI = [7, 6, 5, 4, 3, 2, 1];
+const L2 = {
+    ru: { sky: "SKY", chart: "CHART", build: "Построить карту", name: "Имя", date: "Дата", time: "Время",
+        place: "Место рождения", obsPlace: "Точка наблюдения", now: "сейчас", tz: "пояс",
+        entryTitle: "Новая карта", entrySub: "Дата, время и место рождения. Время — до минуты: от него зависит лагна.",
+        obsSub: "Откуда и «когда» вы смотрите на небо: транзиты, мухурта и Current Sky считаются для этой точки.",
+        err: "Заполните дату, время и выберите город из списка.",
+        csky: "Current Sky", timeline: "Timeline", library: "Library", workspace: "Workspace", settings: "Настройки",
+        moonIn: "Луна в", until: "до", next: "дальше", maha: "Махадаша", antar: "Антардаша", left: "осталось",
+        trNow: "Транзиты сейчас", soon: "Скоро · 6 мес", muh: "Мухурта · окна дня", sade: "Саде Сати",
+        inHouse: "идёт по вашему", house: "дому", apply: "Применить",
+        lagna: "Лагна", moonNow: "Луна сейчас", rules: "Управляет", aspectsTo: "Аспектирует", disp: "Диспозитор",
+        dign: "Достоинство", nav: "Навамша", fromMoon: "От Луны", conj: "Соединения", graph: "Связи",
+        readTitle: "Кто я · три точки", readSub: "Лагна · Луна · Солнце — по методике «Паспорта»",
+        libSub: "Разборы, собранные из вашей карты", soonCard: "скоро",
+        dasha: "даши", years: "годы", clickTL: "клик по шкале — перенести точку наблюдения",
+        lagnesh: "лагнеш", vargo: "варготтама", housesW: "дома", sign: "Знак", nakW: "Накшатра",
+        inYourChart: "В вашей карте", transitW: "транзит", chartWord: "Карта", auto: "авто", friendW: "друг",
+        inW: "в", praty: "Пратьянтар", rotHint: "Поверни телефон горизонтально", rotSub: "LOTUS работает в ландшафтном режиме", nowLbl: "сейчас", toSade: "до Саде Сати", sadeOn: "Саде Сати идёт",
+    },
+    en: { sky: "SKY", chart: "CHART", build: "Build chart", name: "Name", date: "Date", time: "Time",
+        place: "Birthplace", obsPlace: "Observation point", now: "now", tz: "tz",
+        entryTitle: "New chart", entrySub: "Birth date, time and place. Time to the minute — lagna depends on it.",
+        obsSub: "Where and \u201cwhen\u201d you look at the sky: transits, muhurta and Current Sky are computed for this point.",
+        err: "Fill date, time and pick a city from the list.",
+        csky: "Current Sky", timeline: "Timeline", library: "Library", workspace: "Workspace", settings: "Settings",
+        moonIn: "Moon in", until: "until", next: "next", maha: "Mahadasha", antar: "Antardasha", left: "left",
+        trNow: "Transits now", soon: "Soon · 6 mo", muh: "Muhurta · windows", sade: "Sade Sati",
+        inHouse: "transiting your", house: "house", apply: "Apply",
+        lagna: "Lagna", moonNow: "Moon now", rules: "Rules", aspectsTo: "Aspects", disp: "Dispositor",
+        dign: "Dignity", nav: "Navamsha", fromMoon: "From Moon", conj: "Conjunct", graph: "Links",
+        readTitle: "Who am I · three points", readSub: "Lagna · Moon · Sun — the \u201cPassport\u201d method",
+        libSub: "Readings assembled from your chart", soonCard: "soon",
+        dasha: "dashas", years: "years", clickTL: "click the track to move the observation point",
+        lagnesh: "lagnesh", vargo: "vargottama", housesW: "houses", sign: "Sign", nakW: "Nakshatra",
+        inYourChart: "In your chart", transitW: "transit", chartWord: "Chart", auto: "auto", friendW: "friend",
+        inW: "in", praty: "Pratyantar", rotHint: "Rotate your phone", rotSub: "LOTUS works in landscape", nowLbl: "now", toSade: "to Sade Sati", sadeOn: "Sade Sati active",
+    },
+};
+/* ── язык: глобальные хелперы имён ── */
+let LANGG = "ru";
+const SN = (x) => SIGNS[x][LANGG];
+const SIGN_LOC = ["Овне", "Тельце", "Близнецах", "Раке", "Льве", "Деве", "Весах", "Скорпионе", "Стрельце", "Козероге", "Водолее", "Рыбах"];
+const SNL = (x) => (LANGG === "ru" ? SIGN_LOC[x] : SIGNS[x].en);
+const PN = (k) => PL[k][LANGG];
+const NN = (n) => NAKS[n][LANGG === "ru" ? 0 : 1];
+const G_LBL = { ru: { conj: "союз", disp: "дисп.", rules: "управл.", asp: "дришти", nak: "накш." },
+    en: { conj: "conj", disp: "disp", rules: "rules", asp: "drishti", nak: "nakshatra" } };
+/* ── вспомогательное ── */
+const jdToLocal = (jd, tz) => {
+    const d = new Date((jd - 2440587.5 + tz / 24) * 86400000);
+    return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes() };
+};
+const fmtD = (jd, tz) => { const l = jdToLocal(jd, tz ?? 0); return `${l.d} ${MONTHS_RU[l.mo - 1]} ${l.y}`; };
+const fmtDT = (jd, tz) => { const l = jdToLocal(jd, tz); return `${l.d} ${MONTHS_RU[l.mo - 1]} ${l.y}, ${String(l.h).padStart(2, "0")}:${String(l.mi).padStart(2, "0")}`; };
+const fmtHM = (jd, tz) => { const l = jdToLocal(jd, tz); return `${String(l.h).padStart(2, "0")}:${String(l.mi).padStart(2, "0")}`; };
+function fmtDur(days) {
+    if (days < 1)
+        return `${Math.max(1, Math.round(days * 24))} ч`;
+    if (days < 32)
+        return `${Math.round(days)} дн`;
+    if (days < 365) {
+        const m = Math.floor(days / 30.44), d = Math.round(days - m * 30.44);
+        return d > 2 ? `${m} мес ${d} дн` : `${m} мес`;
+    }
+    const y = Math.floor(days / 365.25), m = Math.round((days - y * 365.25) / 30.44);
+    return m > 0 ? `${y} г ${m} мес` : `${y} г`;
+}
+function solarAlt(jd, lat, lonE) {
+    const T = (jd - 2451545) / 36525, eps = obliq(T), lam = sunLon(T);
+    const ra = Math.atan2(Math.sin(lam * D2R) * Math.cos(eps * D2R), Math.cos(lam * D2R)) / D2R;
+    const dec = Math.asin(Math.sin(eps * D2R) * Math.sin(lam * D2R)) / D2R;
+    const H = norm(gmst(jd) + lonE - ra);
+    return Math.asin(Math.sin(lat * D2R) * Math.sin(dec * D2R) + Math.cos(lat * D2R) * Math.cos(dec * D2R) * Math.cos(H * D2R)) / D2R;
+}
+function sunRiseSet(y, mo, d, tz, lat, lon) {
+    const jd0 = jdFrom(y, mo, d, 0, 0, tz);
+    let rise = null, set = null;
+    let prev = solarAlt(jd0, lat, lon);
+    for (let m = 2; m <= 1440; m += 2) {
+        const jd = jd0 + m / 1440, a = solarAlt(jd, lat, lon);
+        if (prev < 0 && a >= 0 && !rise)
+            rise = jd;
+        if (prev >= 0 && a < 0 && !set)
+            set = jd;
+        prev = a;
+    }
+    return rise && set && set > rise ? { rise, set } : null;
+}
+function muhurtaWindows(y, mo, d, tz, lat, lon) {
+    const rs = sunRiseSet(y, mo, d, tz, lat, lon);
+    if (!rs)
+        return [];
+    const dl = rs.set - rs.rise, seg = dl / 8;
+    const dow = new Date(Date.UTC(y, mo - 1, d)).getUTCDay();
+    const w = (idx) => [rs.rise + (idx - 1) * seg, rs.rise + idx * seg];
+    const [r1, r2] = w(WD_RAHU[dow]), [y1, y2] = w(WD_YAMA[dow]), [g1, g2] = w(WD_GULI[dow]);
+    const a1 = rs.rise + dl * 7 / 15, a2 = rs.rise + dl * 8 / 15;
+    const U = LANGG === "ru"
+        ? ["начинания, переговоры", "не начинать нового", "лучше переждать", "рутина, без стартов"]
+        : ["beginnings, talks", "avoid new starts", "better to wait", "routine only"];
+    return [
+        { n: "Абхиджит", good: true, s: a1, e: a2, u: U[0] },
+        { n: "Рахукалам", good: false, s: r1, e: r2, u: U[1] },
+        { n: "Ямаганда", good: false, s: y1, e: y2, u: U[2] },
+        { n: "Гулика", good: false, s: g1, e: g2, u: U[3] },
+    ].sort((a, b) => a.s - b.s);
+}
+/* ── визуальные константы ── */
+const SPHERE = {
+    Sun: "radial-gradient(circle at 36% 32%, #ffe9b0, #f0b23c 55%, #a85a12)",
+    Moon: "radial-gradient(circle at 35% 30%, #f4f2ec, #c6c3ba 55%, #6b6962)",
+    Mars: "radial-gradient(circle at 35% 30%, #f0a48e, #cf5b3f 55%, #6f2415)",
+    Mercury: "radial-gradient(circle at 35% 30%, #b7e6c6, #5fb878 55%, #275b3a)",
+    Jupiter: "repeating-linear-gradient(4deg,#d8b28a 0 4px,#b98a5c 4px 7px,#e0c19a 7px 11px,#a97e50 11px 14px)",
+    Venus: "radial-gradient(circle at 35% 30%, #ffe4d0, #e0b090 55%, #8a5a3a)",
+    Saturn: "repeating-linear-gradient(3deg,#e6d3ac 0 5px,#c9b184 5px 9px,#dcc79c 9px 13px)",
+};
+const PC = { Sun: "#f0c04a", Moon: "#e9e4d8", Mars: "#e0715a", Mercury: "#5fb878", Jupiter: "#dea86e", Venus: "#e8a988", Saturn: "#cbb586", Rahu: "#a48fd8", Ketu: "#bfa079" };
+const SKY_Y = { Sun: 66, Moon: 20, Mars: 74, Mercury: 55, Jupiter: 30, Venus: 62, Saturn: 38, Rahu: 24, Ketu: 76 };
+const SIZE = { Sun: 44, Moon: 22, Mars: 17, Mercury: 15, Jupiter: 38, Venus: 20, Saturn: 34, Rahu: 12, Ketu: 12 };
+const HP_N = [[50, 26], [27, 13], [13, 26], [27, 50], [13, 74], [27, 87], [50, 74], [73, 87], [87, 74], [73, 50], [87, 26], [73, 13]];
+const CELLS = { 11: [0, 0], 0: [1, 0], 1: [2, 0], 2: [3, 0], 10: [0, 1], 3: [3, 1], 9: [0, 2], 4: [3, 2], 8: [0, 3], 7: [1, 3], 6: [2, 3], 5: [3, 3] };
+/* ── звёздное небо ── */
+function Space() {
+    const ref = useRef(null);
+    useEffect(() => {
+        const cv = ref.current, cx = cv.getContext("2d");
+        const draw = () => {
+            const dp = window.devicePixelRatio || 1;
+            const W = cv.width = innerWidth * dp, H = cv.height = innerHeight * dp;
+            cv.style.width = innerWidth + "px";
+            cv.style.height = innerHeight + "px";
+            cx.fillStyle = "#020204";
+            cx.fillRect(0, 0, W, H);
+            let seed = 7;
+            const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+            const bx = W * 0.08, by = H * 0.9, ex = W * 0.96, ey = H * 0.04;
+            for (let i = 0; i < 2400; i++) {
+                const t = rnd(), g = (rnd() + rnd() + rnd() - 1.5) / 1.5;
+                const x = bx + (ex - bx) * t + g * W * 0.09, yy = by + (ey - by) * t + g * H * 0.13;
+                cx.fillStyle = `rgba(205,210,232,${((0.02 + rnd() * 0.09) * (1 - Math.abs(g))).toFixed(3)})`;
+                cx.fillRect(x, yy, 1.1 * dp, 1.1 * dp);
+            }
+            for (let i = 0; i < 850; i++) {
+                cx.fillStyle = `rgba(225,230,245,${(0.1 + rnd() * 0.55).toFixed(2)})`;
+                cx.beginPath();
+                cx.arc(rnd() * W, rnd() * H, (rnd() < 0.9 ? 0.5 : 1.1) * dp, 0, 7);
+                cx.fill();
+            }
+            for (let i = 0; i < 22; i++) {
+                const x = rnd() * W, yy = rnd() * H;
+                cx.fillStyle = "rgba(240,244,255,.9)";
+                cx.beginPath();
+                cx.arc(x, yy, 1.4 * dp, 0, 7);
+                cx.fill();
+                cx.fillStyle = "rgba(240,244,255,.1)";
+                cx.beginPath();
+                cx.arc(x, yy, 4 * dp, 0, 7);
+                cx.fill();
+            }
+        };
+        draw();
+        addEventListener("resize", draw);
+        return () => removeEventListener("resize", draw);
+    }, []);
+    return React.createElement("canvas", { ref: ref, id: "space" });
+}
+/* ── автоподсказка города ── */
+function CityInput({ value, onPick, ph }) {
+    const [q, setQ] = useState(value ? value.ru : "");
+    const [open, setOpen] = useState(false);
+    useEffect(() => { if (value)
+        setQ(value.ru); }, [value]);
+    const matches = useMemo(() => {
+        const s = q.trim().toLowerCase();
+        if (s.length < 2)
+            return [];
+        return CITIES.filter((c) => c.ru.toLowerCase().includes(s) || c.en.toLowerCase().includes(s)).slice(0, 7);
+    }, [q]);
+    return (React.createElement("div", { className: "cityw" },
+        React.createElement("input", { value: q, placeholder: ph, onChange: (e) => { setQ(e.target.value); setOpen(true); }, onFocus: () => setOpen(true) }),
+        open && matches.length > 0 && (React.createElement("div", { className: "drop" }, matches.map((c) => (React.createElement("div", { key: c.en, className: "dropi", onClick: () => { onPick(c); setQ(c.ru); setOpen(false); } },
+            React.createElement("b", null, c.ru),
+            ", ",
+            c.cru)))))));
+}
+/* ── ГЛАВНЫЙ КОМПОНЕНТ ── */
+function App() {
+    const [lang, setLang] = useState("ru");
+    const t = L2[lang];
+    LANGG = lang;
+    const [screen, setScreen] = useState("entry");
+    const [name, setName] = useState("");
+    const [bf, setBf] = useState({ date: "", time: "", city: null, tz: "" });
+    const [of, setOf] = useState({ city: null, date: "", time: "" });
+    const [err, setErr] = useState(false);
+    const [natal, setNatal] = useState(null);
+    const [obs, setObs] = useState(null); // {jd,tz,lat,lon,city}
+    const [view, setView] = useState("sky");
+    const [mode, setMode] = useState("d1");
+    const [layers, setLayers] = useState({ asp: false, tr: true });
+    const [sel, setSel] = useState(null); // 'Me' | 'tr:Ju'
+    const [panel, setPanel] = useState("csky"); // csky|timeline|library|reading
+    const [obsEdit, setObsEdit] = useState(false);
+    const [tlSel, setTlSel] = useState({});
+    const res = useMemo(() => (natal ? computeAll(natal) : null), [natal]);
+    useEffect(() => {
+        const m = document.querySelector('meta[name="viewport"]');
+        if (m)
+            m.setAttribute("content", res ? "width=940" : "width=device-width, initial-scale=1.0");
+    }, [!!res]);
+    const transits = useMemo(() => (obs ? transitsNow(obs.jd) : null), [obs]);
+    /* Current Sky данные */
+    const csky = useMemo(() => {
+        if (!res || !obs || !transits)
+            return null;
+        const moonT = transits.find((x) => x.key === "Moon");
+        const nextNak = Math.floor(lonAt("Moon", moonT.untilNak + 0.05) / (40 / 3));
+        const maha = res.dashas.find((dd) => obs.jd >= dd.start && obs.jd < dd.end);
+        const antar = maha ? maha.antars.find((a) => obs.jd >= a.start && obs.jd < a.end) : null;
+        const sade = res.sade.find((s) => obs.jd >= s.start && obs.jd < s.end);
+        const events = [];
+        transits.forEach((tr) => {
+            if (tr.key !== "Moon" && tr.until - obs.jd <= 185) {
+                const ns = Math.floor(lonAt(tr.key, tr.until + 0.2) / 30);
+                events.push({ jd: tr.until, txt: `${PN(tr.key)}: ${SN(tr.sign)} → ${SN(ns)}` });
+            }
+            if (["Jupiter", "Saturn", "Rahu", "Ketu"].includes(tr.key) && tr.untilNak - obs.jd <= 185) {
+                const nn = Math.floor(lonAt(tr.key, tr.untilNak + 0.2) / (40 / 3));
+                events.push({ jd: tr.untilNak, txt: `${PN(tr.key)}: ${NN(tr.nak)} → ${NN(nn)}` });
+            }
+        });
+        events.sort((a, b) => a.jd - b.jd);
+        const lo = jdToLocal(obs.jd, obs.tz);
+        const muh = muhurtaWindows(lo.y, lo.mo, lo.d, obs.tz, obs.lat, obs.lon);
+        return { moonT, nextNak, maha, antar, sade, events: events.slice(0, 6), muh, rs: sunRiseSet(lo.y, lo.mo, lo.d, obs.tz, obs.lat, obs.lon) };
+    }, [res, obs, transits]);
+    const buildChart = () => {
+        const [y, mo, d] = (bf.date || "").split("-").map(Number);
+        const [h, mi] = (bf.time || "").split(":").map(Number);
+        if (!y || isNaN(h) || !bf.city) {
+            setErr(true);
+            return;
+        }
+        const tz = bf.tz !== "" && !isNaN(parseFloat(bf.tz)) ? parseFloat(bf.tz) : zoneOffset(bf.city.z, y, mo);
+        setNatal({ y, mo, d, h, mi, tz, lat: bf.city.lat, lon: bf.city.lon });
+        const oc = of.city || bf.city;
+        let ojd;
+        if (of.date && of.time) {
+            const [oy, omo, od] = of.date.split("-").map(Number);
+            const [oh, omi] = of.time.split(":").map(Number);
+            ojd = jdFrom(oy, omo, od, oh, omi, zoneOffset(oc.z, oy, omo));
+        }
+        else
+            ojd = Date.now() / 86400000 + 2440587.5;
+        const ol = jdToLocal(ojd, 0);
+        const otz = zoneOffset(oc.z, ol.y, ol.mo);
+        setObs({ jd: ojd, tz: otz, lat: oc.lat, lon: oc.lon, city: oc });
+        setErr(false);
+        setScreen("main");
+    };
+    const obsNow = () => { if (!obs)
+        return; const j = Date.now() / 86400000 + 2440587.5; setObs({ ...obs, jd: j }); };
+    const setObsJd = (jd) => setObs({ ...obs, jd });
+    /* данные карты по режиму */
+    const chart = useMemo(() => {
+        if (!res)
+            return null;
+        const asc = mode === "d9" ? navamshaSign(res.asc) : mode === "moon" ? res.moonSign : res.ascSign;
+        const signOf = (p) => (mode === "d9" ? p.d9sign : p.sign);
+        const houseOfSign = (s) => ((s - asc + 12) % 12) + 1;
+        const aspMap = Array.from({ length: 12 }, () => []);
+        res.planets.forEach((p) => {
+            const h = houseOfSign(signOf(p));
+            (ASPECT_OFF[p.key] || [7]).forEach((o) => {
+                const th = ((h - 1 + o - 1) % 12) + 1;
+                aspMap[(asc + th - 1) % 12].push(p.key);
+            });
+        });
+        return { asc, signOf, houseOfSign, aspMap };
+    }, [res, mode]);
+    const selP = sel && !sel.startsWith("tr:") && res ? res.planets.find((p) => p.key === sel) : null;
+    const selT = sel && sel.startsWith("tr:") && transits ? transits.find((x) => x.key === sel.slice(3)) : null;
+    const CSS = `
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--ink:#e8eaef;--dim:#767b88;--dim2:#4a4f5a;--line:rgba(255,255,255,.09);--mono:'JetBrains Mono',monospace;
+    --gold:#e8b64c;--live:#7fb7d8;--good:#4fae7a;--bad:#d0604a}
+  html,body,#root{height:100%}
+  body{background:#000;color:var(--ink);font-family:'Inter',system-ui,sans-serif;font-size:12px;overflow:hidden}
+  #space{position:fixed;inset:0}
+  .mono{font-family:var(--mono)}
+  button,input{font-family:inherit;color:inherit}
+  input{background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:12px;outline:none;width:100%}
+  input:focus{border-color:rgba(255,255,255,.3)}
+  ::placeholder{color:#565b66}
+
+  .top{position:fixed;top:0;left:0;right:0;height:46px;display:flex;align-items:center;padding:0 16px;
+    border-bottom:1px solid var(--line);z-index:30;background:linear-gradient(180deg,rgba(0,0,0,.75),rgba(0,0,0,.4));backdrop-filter:blur(6px)}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:500;letter-spacing:4px;font-size:12px}
+  .tsep{width:1px;height:16px;background:var(--line);margin:0 14px}
+  .tmeta{font-family:var(--mono);font-size:10px;color:var(--dim)}
+  .tmeta b{color:var(--ink);font-weight:400}
+  .obschip{margin-left:14px;font-family:var(--mono);font-size:10px;color:var(--live);cursor:pointer;
+    border:1px solid rgba(127,183,216,.3);border-radius:6px;padding:4px 10px;background:rgba(127,183,216,.06)}
+  .tright{margin-left:auto;display:flex;align-items:center;gap:12px}
+  .lang{font-family:var(--mono);font-size:9px;display:flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .lang span{padding:3px 8px;color:var(--dim);cursor:pointer}
+  .lang .on{background:rgba(255,255,255,.92);color:#000}
+
+  .rail{position:fixed;top:46px;bottom:52px;left:0;width:62px;border-right:1px solid var(--line);z-index:25;
+    display:flex;flex-direction:column;align-items:center;padding-top:12px;gap:3px;background:rgba(0,0,0,.45);backdrop-filter:blur(4px)}
+  .ric{width:52px;padding:8px 0 6px;display:flex;flex-direction:column;align-items:center;gap:4px;border-radius:8px;cursor:pointer;color:var(--dim);border:none;background:none}
+  .ric svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.4}
+  .ric span{font-size:7px;letter-spacing:.5px;font-family:var(--mono);text-transform:uppercase;text-align:center}
+  .ric.on{color:var(--ink);background:rgba(255,255,255,.07)}
+
+  .stage{position:fixed;top:46px;left:62px;right:0;bottom:52px;z-index:10}
+  .vhead{position:absolute;top:14px;left:22px;z-index:12}
+  .vhead h1{font-size:11px;font-weight:500;letter-spacing:3px;text-transform:uppercase}
+  .vhead p{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:3px}
+  .vtabs{position:absolute;top:14px;right:20px;z-index:12;display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;backdrop-filter:blur(4px)}
+  .vtab{font-family:var(--mono);font-size:9px;letter-spacing:2px;padding:6px 14px;color:var(--dim);cursor:pointer;background:rgba(0,0,0,.35);border:none}
+  .vtab.on{color:#000;background:rgba(255,255,255,.9)}
+  .chips{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:12;display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;backdrop-filter:blur(5px)}
+  .chip{font-family:var(--mono);font-size:8.5px;letter-spacing:1px;padding:6px 11px;color:var(--dim);cursor:pointer;background:rgba(0,0,0,.4);display:flex;align-items:center;gap:6px;border:none}
+  .chip.on{color:var(--ink)}
+  .chip .st{width:5px;height:5px;border-radius:4px;background:currentColor}
+  .chip.off .st{background:transparent;border:1px solid currentColor}
+  .chipsep{width:1px;background:var(--line)}
+
+  /* SKY */
+  .bp{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;transform:translate(-50%,-50%);z-index:5}
+  .sphere{border-radius:50%;position:relative}
+  .sphere::after{content:'';position:absolute;inset:0;border-radius:50%;
+    background:radial-gradient(circle at 31% 27%, rgba(255,255,255,.36), transparent 42%),radial-gradient(circle at 74% 78%, rgba(0,0,0,.6), transparent 62%)}
+  .bl{margin-top:6px;text-align:center;white-space:nowrap;background:rgba(2,3,7,.62);padding:3px 8px 4px;border-radius:7px;border:1px solid rgba(255,255,255,.05)}
+  .bl .n{font-family:var(--mono);font-size:10px}
+  .bl .n i{font-style:normal;color:#9aa0ad;font-weight:300;margin-left:4px}
+  .bl .s{font-family:var(--mono);font-size:8px;color:var(--dim);margin-top:1px}
+  .ringw{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-24deg);pointer-events:none}
+  .ring{border:2px solid rgba(214,204,178,.5);border-radius:50%;transform:scaleY(.32)}
+  .nodep{border-radius:50%;border:1.6px solid;position:relative}
+  .nodep::after{content:'';position:absolute;inset:2.5px;border-radius:50%;background:currentColor;opacity:.7}
+  .skylines{position:absolute;inset:0;z-index:2;pointer-events:none}
+  .skylines line{stroke:#3d6a8a;stroke-width:1;stroke-dasharray:5 5;opacity:.45;vector-effect:non-scaling-stroke}
+  .trdot{position:absolute;transform:translate(-50%,-50%);z-index:4;cursor:pointer;display:flex;flex-direction:column;align-items:center}
+  .trdot .c{width:14px;height:14px;border-radius:8px;border:1.5px dashed;display:grid;place-items:center;font-family:var(--mono);font-size:7px;font-weight:700}
+  .trdot .d{font-family:var(--mono);font-size:7.5px;color:var(--dim);margin-top:2px}
+
+  /* CHART (северный ромб) */
+  .nh{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:1px;z-index:6;max-width:23%}
+  .nh .rnum{font-family:var(--mono);font-size:8px;color:rgba(255,255,255,.28)}
+  .nrow{display:flex;gap:9px;align-items:baseline}
+  .nasp{font-family:var(--mono);font-size:7.5px;color:rgba(160,170,195,.48);letter-spacing:1.2px;margin-top:1px}
+  .ntr{display:flex;gap:7px;margin-top:2px}
+  .ntr .ti{display:flex;align-items:center;gap:3px;cursor:pointer;font-family:var(--mono);font-size:8px}
+  .ntr .ti .c{width:9px;height:9px;border-radius:6px;border:1.2px dashed}
+
+  .gridw{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);width:min(76vh,600px);aspect-ratio:1;z-index:5}
+  .gridw svg{position:absolute;inset:0;width:100%;height:100%}
+  .gl{stroke:rgba(255,255,255,.24);stroke-width:1;fill:none}
+  .hnum{font-family:'Inter';font-weight:300;font-size:15px;fill:rgba(255,255,255,.24)}
+  .slab{font-family:var(--mono);font-size:6.8px;fill:rgba(255,255,255,.26);letter-spacing:1px}
+  .cp{position:absolute;white-space:nowrap;cursor:pointer;z-index:6}
+  .cp .n{font-family:var(--mono);font-size:11px;font-weight:500}
+  .cp .n i{font-style:normal;color:#8b909c;font-weight:300;margin-left:4px;font-size:9.5px}
+  .cp .n sup{font-size:6.5px;color:var(--live);margin-left:1px}
+  .cp .s{font-family:var(--mono);font-size:7.5px;color:var(--dim);margin-top:0px}
+  .cp.selp .n{text-shadow:0 0 12px rgba(232,182,76,.9)}
+  .asplet{position:absolute;font-family:var(--mono);font-size:8px;color:rgba(160,170,195,.5);letter-spacing:1.5px;z-index:5}
+  .trcell{position:absolute;display:flex;align-items:center;gap:4px;cursor:pointer;z-index:6;font-family:var(--mono);font-size:8.5px}
+  .trcell .c{width:10px;height:10px;border-radius:6px;border:1.3px dashed}
+
+  /* панели */
+  .panel{position:fixed;top:46px;bottom:52px;z-index:28;background:rgba(8,10,15,.88);backdrop-filter:blur(10px);
+    border-right:1px solid var(--line);overflow-y:auto;animation:pin .22s ease-out}
+  @keyframes pin{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:none}}
+  .panel.left{left:62px;width:296px;padding:16px}
+  .panel.right{right:0;left:auto;width:308px;border-right:none;border-left:1px solid var(--line);padding:16px;animation:pinr .22s ease-out}
+  @keyframes pinr{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+  .panel.wide{left:62px;right:0;width:auto;padding:18px 24px;background:rgba(6,8,12,.93)}
+  .eyebrow{font-family:var(--mono);font-size:8.5px;letter-spacing:2px;text-transform:uppercase;color:var(--dim);margin-bottom:10px;display:flex;align-items:center;gap:7px}
+  .eyebrow .x{margin-left:auto;cursor:pointer;color:var(--dim);border:none;background:none;font-size:11px}
+  .live{width:6px;height:6px;border-radius:6px;background:var(--live);box-shadow:0 0 8px var(--live)}
+  .lead{font-size:19px;font-weight:600}
+  .lead .em{color:var(--live)}
+  .sub{font-family:var(--mono);font-size:9.5px;color:var(--dim);margin-top:4px}
+  .hr{height:1px;background:var(--line);margin:12px 0}
+  .kv{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:12px}
+  .kv .k{font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;text-transform:uppercase}
+  .kv .w{font-family:var(--mono);font-size:9px;color:var(--dim)}
+  .trrow{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11.5px}
+  .trrow .dot{width:14px;height:14px;border-radius:8px;display:grid;place-items:center;font-family:var(--mono);font-size:6.5px;font-weight:800;color:#0b0d12}
+  .trrow .w{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--dim)}
+  .ev{display:flex;gap:9px;padding:4px 0;font-size:11px;color:#b9bfce}
+  .ev .d{font-family:var(--mono);font-size:9px;color:var(--dim);white-space:nowrap;width:52px}
+  .daybar{position:relative;height:10px;border-radius:4px;background:#141a26;margin:8px 0 3px;overflow:hidden}
+  .dayseg{position:absolute;top:0;height:100%}
+  .dayt{display:flex;justify-content:space-between;font-family:var(--mono);font-size:7.5px;color:var(--dim)}
+  .win{display:flex;gap:8px;padding:3.5px 0;font-size:11px;align-items:baseline}
+  .win .t{font-family:var(--mono);font-size:9.5px;width:82px;white-space:nowrap}
+  .win .u{color:var(--dim);font-size:9.5px}
+
+  /* инспектор */
+  .ih{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .ig{width:34px;height:34px;border-radius:50%;position:relative;flex-shrink:0}
+  .ig::after{content:'';position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 31% 27%, rgba(255,255,255,.35), transparent 45%),radial-gradient(circle at 74% 78%, rgba(0,0,0,.55), transparent 62%)}
+  .ig span{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:11px;color:#0b0d12;z-index:1}
+  .iname{font-size:15px;font-weight:600}
+  .isub{font-family:var(--mono);font-size:9.5px;color:var(--dim)}
+  .tags{display:flex;gap:5px;flex-wrap:wrap;margin:9px 0}
+  .tag{font-family:var(--mono);font-size:8.5px;border:1px solid;border-radius:5px;padding:2px 7px}
+  .irow{display:flex;justify-content:space-between;padding:5.5px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:11.5px}
+  .irow .k{font-family:var(--mono);font-size:9px;color:var(--dim)}
+  .gbox{border:1px solid var(--line);border-radius:11px;background:rgba(10,13,20,.6);margin:10px 0}
+  .gedge{stroke:#33507a;stroke-width:1;opacity:.7}
+  .gel{font-family:var(--mono);font-size:6.2px;fill:#5d6e8c}
+  .gn{font-family:var(--mono);font-size:7.5px;font-weight:700}
+
+  /* таймлайн */
+  .tlmini{position:fixed;left:62px;right:0;bottom:0;height:52px;z-index:26;border-top:1px solid var(--line);
+    background:rgba(0,0,0,.66);backdrop-filter:blur(6px);display:flex;align-items:center;gap:12px;padding:0 18px;cursor:pointer}
+  .tllab{font-family:var(--mono);font-size:8.5px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;white-space:nowrap}
+  .tltrack{position:relative;flex:1;height:14px;border-radius:3px;overflow:hidden;display:flex;background:#10141e}
+  .tlseg{height:100%;display:flex;align-items:center;padding-left:6px;font-family:var(--mono);font-size:7.5px;font-weight:700;color:#0b0d12;border-right:1px solid #000;overflow:hidden;white-space:nowrap}
+  .tlnow{position:absolute;width:2.5px;top:-4px;bottom:-4px;background:var(--gold);color:var(--gold);z-index:5;box-shadow:0 0 7px 1px rgba(232,182,76,.9);pointer-events:none}
+  .tlnow:after,.tlobs:after{content:"";position:absolute;top:-5px;left:50%;transform:translateX(-50%);border:4.5px solid transparent;border-top-color:currentColor}
+  .tlobs{position:absolute;width:2.5px;top:-4px;bottom:-4px;background:var(--live);color:var(--live);z-index:5;box-shadow:0 0 7px 1px rgba(127,183,216,.9);pointer-events:none}
+  .tlyr{font-family:var(--mono);font-size:8.5px;color:var(--dim)}
+  .bigtrack{position:relative;height:26px;border-radius:4px;overflow:hidden;display:flex;background:#10141e;cursor:crosshair}
+  .bigrow{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .bigl{font-family:var(--mono);font-size:8.5px;color:var(--dim);width:86px;text-align:right;letter-spacing:1px;text-transform:uppercase;flex-shrink:0}
+  .sadeb{position:absolute;height:12px;top:7px;border-radius:3px;border:1px solid rgba(232,182,76,.55);background:repeating-linear-gradient(45deg,rgba(232,182,76,.8),rgba(232,182,76,.8) 3px,transparent 3px,transparent 6.5px)}
+  .sadeover{position:absolute;top:0;bottom:0;pointer-events:none;background:repeating-linear-gradient(45deg,rgba(255,255,255,.22),rgba(255,255,255,.22) 2px,transparent 2px,transparent 5px)}
+  .zseg{position:absolute;top:0;bottom:0;display:flex;align-items:center;padding-left:5px;font-family:var(--mono);font-size:7.5px;font-weight:700;color:#0b0d12;border-right:1px solid rgba(0,0,0,.7);overflow:hidden;white-space:nowrap;cursor:pointer}
+  .zseg.selseg{box-shadow:inset 0 0 0 1.5px #fff;z-index:2}
+  .term{height:auto;max-height:58vh;overflow-y:auto}
+  .tfoot{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px;align-items:center}
+  .tfoot b{color:var(--ink);font-weight:600}
+  .mk{font-size:6.5px;margin-left:1.5px;font-weight:700}
+  .rothint{display:none}
+  @media (orientation:portrait) and (max-width:760px){.rothint{display:grid;position:fixed;inset:0;z-index:999;background:#050608;place-items:center;text-align:center}}
+  .rothint .ric-i{font-size:30px;margin-bottom:12px;display:block;animation:rot 2.2s ease-in-out infinite}
+  @keyframes rot{0%,20%{transform:rotate(0)}55%,80%{transform:rotate(90deg)}100%{transform:rotate(90deg)}}
+  .antseg{height:100%;border-right:1px solid rgba(0,0,0,.7)}
+  .tlhint{font-family:var(--mono);font-size:8.5px;color:var(--dim);margin-top:8px}
+
+  /* библиотека */
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-top:6px}
+  .card{border:1px solid var(--line);border-radius:12px;padding:16px 15px;background:rgba(255,255,255,.02);cursor:pointer}
+  .card:hover{background:rgba(255,255,255,.05)}
+  .card h3{font-size:14px;font-weight:600}
+  .card p{font-size:10.5px;color:var(--dim);margin-top:5px;line-height:1.5}
+  .card.dis{opacity:.38;cursor:default}
+  .card .k{font-family:var(--mono);font-size:8px;letter-spacing:1.5px;color:var(--gold);text-transform:uppercase}
+  .read{max-width:640px}
+  .p3c{border-left:2px solid var(--gold);padding:12px 14px;margin-bottom:12px;background:rgba(255,255,255,.025);border-radius:0 10px 10px 0;line-height:1.6;font-size:12px}
+  .p3c.crack{border-left-color:var(--bad)}
+  .p3h{font-family:var(--mono);font-size:9px;color:var(--gold);letter-spacing:1.5px;text-transform:uppercase}
+  .p3c.crack .p3h{color:var(--bad)}
+  .p3q{color:var(--dim);font-size:10px;font-style:italic;margin:3px 0 7px}
+  .pass{font-family:var(--mono);font-size:9.5px;color:#b9bfce;background:rgba(232,182,76,.06);border:1px solid var(--line);border-radius:6px;padding:6px 9px;margin:5px 0 8px;line-height:1.5}
+  .p3c p{margin:6px 0}
+  .ex{color:#cfc8e0;font-style:italic;border-left:2px solid rgba(255,255,255,.12);padding-left:9px}
+  .shakti{font-size:11px;color:var(--dim)}
+
+  /* вход */
+  .entry{position:fixed;inset:0;display:grid;place-items:center;z-index:20;overflow-y:auto;padding:30px 14px}
+  .ecard{width:min(430px,94vw);border:1px solid var(--line);border-radius:16px;padding:26px 24px;background:rgba(8,10,15,.82);backdrop-filter:blur(12px)}
+  .ecard h1{font-size:15px;font-weight:600;letter-spacing:.5px}
+  .ecard .es{font-size:11px;color:var(--dim);margin:7px 0 16px;line-height:1.55}
+  .frow{display:flex;gap:9px;margin-bottom:10px}
+  .frow>div{flex:1}
+  .flab{font-family:var(--mono);font-size:8px;letter-spacing:1.5px;color:var(--dim);text-transform:uppercase;margin-bottom:5px;display:block}
+  .cityw{position:relative}
+  .drop{position:absolute;top:100%;left:0;right:0;background:#12161f;border:1px solid rgba(255,255,255,.2);border-radius:8px;margin-top:4px;z-index:40;max-height:200px;overflow-y:auto}
+  .dropi{padding:8px 11px;font-size:11.5px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05)}
+  .dropi:hover{background:rgba(255,255,255,.07)}
+  .cta{width:100%;margin-top:14px;padding:11px;border-radius:8px;border:none;background:rgba(255,255,255,.92);color:#000;
+    font-weight:600;font-size:12.5px;letter-spacing:1px;cursor:pointer}
+  .cta:hover{background:#fff}
+  .eerr{color:var(--bad);font-family:var(--mono);font-size:10px;margin-top:9px}
+  .obsbox{border-top:1px solid var(--line);margin-top:15px;padding-top:13px}
+  .nowbtn{font-family:var(--mono);font-size:9px;border:1px solid var(--line);background:none;border-radius:6px;padding:7px 10px;cursor:pointer;color:var(--dim);white-space:nowrap}
+  .nowbtn:hover{color:var(--ink)}
+  .pop{position:absolute;top:40px;left:0;width:290px;background:#0d1119;border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:14px;z-index:60;box-shadow:0 20px 50px rgba(0,0,0,.6)}
+  `;
+    /* ── ВХОД ── */
+    if (screen === "entry") {
+        return (React.createElement("div", null,
+            React.createElement("style", null, CSS),
+            React.createElement(Space, null),
+            React.createElement("div", { className: "entry" },
+                React.createElement("div", { className: "ecard" },
+                    React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 } },
+                        React.createElement("div", { className: "logo", style: { letterSpacing: 5 } }, "\u274B LOTUS"),
+                        React.createElement("div", { className: "lang" },
+                            React.createElement("span", { className: lang === "ru" ? "on" : "", onClick: () => setLang("ru") }, "RU"),
+                            React.createElement("span", { className: lang === "en" ? "on" : "", onClick: () => setLang("en") }, "EN"))),
+                    React.createElement("h1", null, t.entryTitle),
+                    React.createElement("div", { className: "es" }, t.entrySub),
+                    React.createElement("span", { className: "flab" }, t.name),
+                    React.createElement("input", { value: name, onChange: (e) => setName(e.target.value), placeholder: "\u2014", style: { marginBottom: 10 } }),
+                    React.createElement("div", { className: "frow" },
+                        React.createElement("div", null,
+                            React.createElement("span", { className: "flab" }, t.date),
+                            React.createElement("input", { type: "date", value: bf.date, onChange: (e) => setBf({ ...bf, date: e.target.value }) })),
+                        React.createElement("div", null,
+                            React.createElement("span", { className: "flab" }, t.time),
+                            React.createElement("input", { type: "time", value: bf.time, onChange: (e) => setBf({ ...bf, time: e.target.value }) }))),
+                    React.createElement("div", { className: "frow" },
+                        React.createElement("div", { style: { flex: 2.6 } },
+                            React.createElement("span", { className: "flab" }, t.place),
+                            React.createElement(CityInput, { value: bf.city, onPick: (c) => setBf({ ...bf, city: c }), ph: "\u041C\u043E\u0441\u043A\u0432\u0430\u2026" })),
+                        React.createElement("div", null,
+                            React.createElement("span", { className: "flab" }, t.tz),
+                            React.createElement("input", { value: bf.tz, placeholder: t.auto, onChange: (e) => setBf({ ...bf, tz: e.target.value }) }))),
+                    React.createElement("div", { className: "obsbox" },
+                        React.createElement("span", { className: "flab", style: { color: "var(--live)" } }, t.obsPlace),
+                        React.createElement("div", { className: "es", style: { margin: "2px 0 10px" } }, t.obsSub),
+                        React.createElement("div", { className: "frow" },
+                            React.createElement("div", { style: { flex: 2 } },
+                                React.createElement(CityInput, { value: of.city, onPick: (c) => setOf({ ...of, city: c }), ph: bf.city ? bf.city.ru : "тот же город" })),
+                            React.createElement("div", null,
+                                React.createElement("input", { type: "date", value: of.date, onChange: (e) => setOf({ ...of, date: e.target.value }) })),
+                            React.createElement("div", null,
+                                React.createElement("input", { type: "time", value: of.time, onChange: (e) => setOf({ ...of, time: e.target.value }) }))),
+                        React.createElement("div", { style: { fontFamily: "var(--mono)", fontSize: 9, color: "var(--dim)" } },
+                            "\u043F\u0443\u0441\u0442\u043E = ",
+                            t.now)),
+                    err && React.createElement("div", { className: "eerr" }, t.err),
+                    React.createElement("button", { className: "cta", onClick: buildChart }, t.build)))));
+    }
+    /* ── ОСНОВНОЙ ЭКРАН ── */
+    const lo = jdToLocal(obs.jd, obs.tz);
+    const nowJD = Date.now() / 86400000 + 2440587.5;
+    const span = 100 * 365.25;
+    const pct = (jd) => Math.max(0, Math.min(100, ((jd - res.jd) / span) * 100));
+    const skyX = (lonv) => 5 + (lonv / 360) * 90;
+    const d1house = (s) => ((s - res.ascSign + 12) % 12) + 1;
+    return (React.createElement("div", null,
+        React.createElement("style", null, CSS),
+        React.createElement(Space, null),
+        React.createElement("div", { className: "rothint" },
+            React.createElement("div", null,
+                React.createElement("span", { className: "ric-i" }, "\uD83D\uDCF1"),
+                React.createElement("div", { style: { fontSize: 14, fontWeight: 500 } }, t.rotHint),
+                React.createElement("div", { style: { fontSize: 11, color: "var(--dim)", marginTop: 6 } }, t.rotSub))),
+        React.createElement("div", { className: "top" },
+            React.createElement("div", { className: "logo" }, "\u274B LOTUS"),
+            React.createElement("div", { className: "tsep" }),
+            React.createElement("div", { className: "tmeta" },
+                React.createElement("b", null, name || t.chartWord),
+                " \u00B7 ",
+                String(natal.d).padStart(2, "0"),
+                ".",
+                String(natal.mo).padStart(2, "0"),
+                ".",
+                natal.y),
+            React.createElement("div", { style: { position: "relative" } },
+                React.createElement("div", { className: "obschip", onClick: () => setObsEdit(!obsEdit) },
+                    "\u25C9 ",
+                    fmtDT(obs.jd, obs.tz),
+                    " \u00B7 ",
+                    obs.city.ru,
+                    " \u25BE"),
+                obsEdit && (React.createElement("div", { className: "pop" },
+                    React.createElement("span", { className: "flab", style: { color: "var(--live)" } }, t.obsPlace),
+                    React.createElement("div", { style: { marginBottom: 8 } },
+                        React.createElement(CityInput, { value: obs.city, onPick: (c) => {
+                                const l = jdToLocal(obs.jd, obs.tz);
+                                const tz2 = zoneOffset(c.z, l.y, l.mo);
+                                setObs({ ...obs, city: c, lat: c.lat, lon: c.lon, tz: tz2 });
+                            }, ph: "\u0433\u043E\u0440\u043E\u0434\u2026" })),
+                    React.createElement("div", { className: "frow" },
+                        React.createElement("input", { type: "date", value: `${lo.y}-${String(lo.mo).padStart(2, "0")}-${String(lo.d).padStart(2, "0")}`, onChange: (e) => { const [y2, m2, d2] = e.target.value.split("-").map(Number); if (y2)
+                                setObsJd(jdFrom(y2, m2, d2, lo.h, lo.mi, obs.tz)); } }),
+                        React.createElement("input", { type: "time", value: `${String(lo.h).padStart(2, "0")}:${String(lo.mi).padStart(2, "0")}`, onChange: (e) => { const [h2, mi2] = e.target.value.split(":").map(Number); if (!isNaN(h2))
+                                setObsJd(jdFrom(lo.y, lo.mo, lo.d, h2, mi2, obs.tz)); } }),
+                        React.createElement("button", { className: "nowbtn", onClick: obsNow }, t.now))))),
+            React.createElement("div", { className: "tright" },
+                React.createElement("span", { style: { fontFamily: "var(--mono)", fontSize: 8.5, letterSpacing: 2, color: "var(--dim)" } }, "SIDEREAL \u00B7 LAHIRI"),
+                React.createElement("div", { className: "lang" },
+                    React.createElement("span", { className: lang === "ru" ? "on" : "", onClick: () => setLang("ru") }, "RU"),
+                    React.createElement("span", { className: lang === "en" ? "on" : "", onClick: () => setLang("en") }, "EN")))),
+        React.createElement("div", { className: "rail" },
+            React.createElement("button", { className: `ric ${!panel ? "on" : ""}`, onClick: () => setPanel(null) },
+                React.createElement("svg", { viewBox: "0 0 24 24" },
+                    React.createElement("path", { d: "M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z" })),
+                React.createElement("span", null, t.workspace)),
+            React.createElement("button", { className: `ric ${panel === "csky" ? "on" : ""}`, onClick: () => setPanel(panel === "csky" ? null : "csky") },
+                React.createElement("svg", { viewBox: "0 0 24 24" },
+                    React.createElement("path", { d: "M6 17a4 4 0 1 1 .6-7.95A5.5 5.5 0 0 1 17.4 9.6 3.8 3.8 0 0 1 17 17z" })),
+                React.createElement("span", null, t.csky)),
+            React.createElement("button", { className: `ric ${panel === "timeline" ? "on" : ""}`, onClick: () => setPanel(panel === "timeline" ? null : "timeline") },
+                React.createElement("svg", { viewBox: "0 0 24 24" },
+                    React.createElement("path", { d: "M5 7h14M5 12h14M5 17h9" })),
+                React.createElement("span", null, t.timeline)),
+            React.createElement("button", { className: `ric ${panel === "library" || panel === "reading" ? "on" : ""}`, onClick: () => setPanel(panel === "library" ? null : "library") },
+                React.createElement("svg", { viewBox: "0 0 24 24" },
+                    React.createElement("path", { d: "M5 4h6v16H5zM13 4h6v16h-6z" })),
+                React.createElement("span", null, t.library)),
+            React.createElement("button", { className: "ric", style: { opacity: .35, cursor: "default" } },
+                React.createElement("svg", { viewBox: "0 0 24 24" },
+                    React.createElement("circle", { cx: "12", cy: "12", r: "3" }),
+                    React.createElement("path", { d: "M12 4v2.5M12 17.5V20M4 12h2.5M17.5 12H20M6.3 6.3l1.8 1.8M15.9 15.9l1.8 1.8M17.7 6.3l-1.8 1.8M8.1 15.9l-1.8 1.8" })),
+                React.createElement("span", null, t.settings))),
+        React.createElement("div", { className: "stage", onClick: (e) => {
+                if (obsEdit)
+                    setObsEdit(false);
+                else if (sel && !e.target.closest(".bp,.nh,.trdot,.vtabs,.chips,.vhead,.panel"))
+                    setSel(null);
+            } },
+            React.createElement("div", { className: "vhead" },
+                React.createElement("h1", null, view === "sky" ? "Sky View" : "Chart View"),
+                React.createElement("p", null, view === "sky" ? "Сидерические позиции · " + fmtDT(obs.jd, obs.tz) : `Северный ромб · ${mode.toUpperCase()} · ${t.lagna} ${SN(chart.asc)}`)),
+            React.createElement("div", { className: "vtabs" },
+                React.createElement("button", { className: `vtab ${view === "sky" ? "on" : ""}`, onClick: () => setView("sky") }, t.sky),
+                React.createElement("button", { className: `vtab ${view === "chart" ? "on" : ""}`, onClick: () => setView("chart") }, t.chart)),
+            view === "sky" && (() => {
+                const placed = res.planets.map((p) => ({ p, x: skyX(p.lon), y: SKY_Y[p.key] }))
+                    .sort((a, b) => a.x - b.x);
+                placed.forEach((it, i) => {
+                    for (let j = 0; j < i; j++) {
+                        const o = placed[j];
+                        if (Math.abs(it.x - o.x) < 8.5 && Math.abs(it.y - o.y) < 12)
+                            it.y = o.y + 13;
+                    }
+                });
+                const posOf = (k) => placed.find((q) => q.p.key === k);
+                return (React.createElement("div", { style: { position: "absolute", inset: 0 } },
+                    layers.asp && (React.createElement("svg", { className: "skylines", viewBox: "0 0 100 100", preserveAspectRatio: "none" }, res.planets.map((a) => res.planets.filter((b) => b.key !== a.key && a.aspects.includes(d1house(b.sign)))
+                        .map((b) => {
+                        const A = posOf(a.key), B = posOf(b.key);
+                        return React.createElement("line", { key: a.key + b.key, x1: A.x, y1: A.y, x2: B.x, y2: B.y });
+                    })))),
+                    placed.map(({ p, x, y }) => (React.createElement("div", { key: p.key, className: "bp", style: { left: `${x}%`, top: `${y}%` }, onClick: () => setSel(p.key) },
+                        p.key === "Saturn" ? (React.createElement("div", { style: { position: "relative", width: 34, height: 34 } },
+                            React.createElement("div", { className: "ringw" },
+                                React.createElement("div", { className: "ring", style: { width: 58, height: 58 } })),
+                            React.createElement("div", { className: "sphere", style: { width: 30, height: 30, margin: 2, background: SPHERE.Saturn } }))) : ["Rahu", "Ketu"].includes(p.key) ? (React.createElement("div", { className: "nodep", style: { width: 12, height: 12, color: PC[p.key], borderColor: PC[p.key] } })) : (React.createElement("div", { className: "sphere", style: { width: SIZE[p.key], height: SIZE[p.key], background: SPHERE[p.key], boxShadow: p.key === "Sun" ? "0 0 30px 5px rgba(240,178,60,.25)" : "none" } })),
+                        React.createElement("div", { className: "bl" },
+                            React.createElement("div", { className: "n", style: { color: PC[p.key] } },
+                                PL[p.key].ab,
+                                React.createElement("i", null,
+                                    String(Math.floor(p.deg)).padStart(2, "0"),
+                                    "\u00B0"),
+                                p.retro && React.createElement("sup", { style: { color: "var(--live)", fontSize: 7 } }, " R")),
+                            React.createElement("div", { className: "s" },
+                                SN(p.sign),
+                                " \u00B7 ",
+                                NN(p.nak)))))),
+                    React.createElement("div", { className: "bp", style: { left: `${skyX(res.asc)}%`, top: "14%" } },
+                        React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 16 16" },
+                            React.createElement("circle", { cx: "8", cy: "8", r: "5", fill: "none", stroke: "#e8eaef", strokeWidth: "1" }),
+                            React.createElement("path", { d: "M8 0v4M8 12v4M0 8h4M12 8h4", stroke: "#e8eaef", strokeWidth: "1" })),
+                        React.createElement("div", { className: "bl" },
+                            React.createElement("div", { className: "n" },
+                                "La",
+                                React.createElement("i", null,
+                                    String(Math.floor(res.asc % 30)).padStart(2, "0"),
+                                    "\u00B0")),
+                            React.createElement("div", { className: "s" },
+                                SN(res.ascSign),
+                                " \u00B7 ",
+                                NN(Math.floor(res.asc / (40 / 3)))))),
+                    layers.tr && transits.map((tr) => (React.createElement("div", { key: tr.key, className: "trdot", style: { left: `${skyX(tr.lon)}%`, top: "88%" }, onClick: () => setSel("tr:" + tr.key) },
+                        React.createElement("div", { className: "c", style: { color: PC[tr.key], borderColor: PC[tr.key] } }, PL[tr.key].ab),
+                        React.createElement("div", { className: "d" }, SIGNS[tr.sign].ab))))));
+            })(),
+            view === "chart" && (React.createElement("div", { className: "gridw" },
+                React.createElement("svg", { viewBox: "0 0 400 400" },
+                    React.createElement("rect", { className: "gl", x: "1", y: "1", width: "398", height: "398" }),
+                    React.createElement("path", { className: "gl", d: "M1 1 L399 399 M399 1 L1 399 M200 1 L1 200 L200 399 L399 200 Z", fill: "none" })),
+                Array.from({ length: 12 }, (_, h) => {
+                    const sv = (chart.asc + h) % 12;
+                    const pls = res.planets.filter((p) => chart.signOf(p) === sv);
+                    const rows = [];
+                    for (let i = 0; i < pls.length; i += 2)
+                        rows.push(pls.slice(i, i + 2));
+                    const aspHere = layers.asp ? chart.aspMap[sv] : [];
+                    const trHere = layers.tr && mode !== "d9" ? transits.filter((tr) => tr.sign === sv) : [];
+                    return (React.createElement("div", { key: h, className: "nh", style: { left: `${HP_N[h][0]}%`, top: `${HP_N[h][1]}%` } },
+                        React.createElement("div", { className: "rnum" }, sv + 1),
+                        rows.map((row, ri) => (React.createElement("div", { key: ri, className: "nrow" }, row.map((p) => (React.createElement("div", { key: p.key, className: `cp ${sel === p.key ? "selp" : ""}`, style: { position: "static" }, onClick: () => setSel(p.key) },
+                            React.createElement("div", { className: "n", style: { color: PC[p.key] } },
+                                PL[p.key].ab,
+                                React.createElement("i", null,
+                                    String(Math.floor(p.deg)).padStart(2, "0"),
+                                    "\u00B0"),
+                                p.karaka === 0 && React.createElement("sup", { className: "mk", style: { color: "var(--gold)" } }, "\u2726"),
+                                statuses(p).map(([m2, c2], si) => React.createElement("sup", { key: si, className: "mk", style: { color: c2 } }, m2))))))))),
+                        aspHere.length > 0 && React.createElement("div", { className: "nasp" }, aspHere.map((k) => PL[k].ab).join(" ")),
+                        trHere.length > 0 && (React.createElement("div", { className: "ntr" }, trHere.map((tr) => (React.createElement("span", { key: tr.key, className: "ti", style: { color: PC[tr.key] }, onClick: () => setSel("tr:" + tr.key) },
+                            React.createElement("span", { className: "c", style: { borderColor: PC[tr.key] } }),
+                            PL[tr.key].ab)))))));
+                }))),
+            React.createElement("div", { className: "chips" },
+                view === "chart" && (React.createElement(React.Fragment, null,
+                    ["d1", "d9", "moon"].map((m) => (React.createElement("button", { key: m, className: `chip ${mode === m ? "on" : ""}`, onClick: () => setMode(m) }, m.toUpperCase()))),
+                    React.createElement("span", { className: "chipsep" }))),
+                React.createElement("button", { className: `chip ${layers.asp ? "on" : "off"}`, onClick: () => setLayers({ ...layers, asp: !layers.asp }) },
+                    React.createElement("span", { className: "st" }),
+                    "ASPECTS"),
+                React.createElement("button", { className: `chip ${layers.tr ? "on" : "off"}`, onClick: () => setLayers({ ...layers, tr: !layers.tr }) },
+                    React.createElement("span", { className: "st" }),
+                    "TRANSITS"))),
+        panel === "csky" && csky && (React.createElement("div", { className: "panel left" },
+            React.createElement("div", { className: "eyebrow", style: { color: "var(--live)" } },
+                React.createElement("span", { className: "live" }),
+                t.csky,
+                " \u00B7 ",
+                obs.city.ru,
+                React.createElement("button", { className: "x", onClick: () => setPanel(null) }, "\u2715")),
+            React.createElement("div", { className: "lead" },
+                t.moonIn,
+                " ",
+                React.createElement("span", { className: "em" }, NN(csky.moonT.nak))),
+            React.createElement("div", { className: "sub" },
+                t.until,
+                " ",
+                fmtHM(csky.moonT.untilNak, obs.tz),
+                " (",
+                fmtD(csky.moonT.untilNak, obs.tz),
+                ") \u2192 ",
+                NN(csky.nextNak)),
+            React.createElement("div", { className: "hr" }),
+            csky.maha && React.createElement("div", { className: "kv" },
+                React.createElement("span", { className: "k" }, t.maha),
+                React.createElement("span", null,
+                    PN(csky.maha.lord),
+                    React.createElement("span", { className: "w" },
+                        " \u00B7 ",
+                        t.left,
+                        " ",
+                        fmtDur(csky.maha.end - obs.jd)))),
+            csky.antar && React.createElement("div", { className: "kv" },
+                React.createElement("span", { className: "k" }, t.antar),
+                React.createElement("span", null,
+                    PN(csky.antar.lord),
+                    React.createElement("span", { className: "w" },
+                        " \u00B7 ",
+                        t.left,
+                        " ",
+                        fmtDur(csky.antar.end - obs.jd)))),
+            csky.sade && React.createElement("div", { className: "kv" },
+                React.createElement("span", { className: "k" }, t.sade),
+                React.createElement("span", { style: { color: "var(--bad)" } },
+                    t.until,
+                    " ",
+                    fmtD(csky.sade.end, obs.tz),
+                    React.createElement("span", { className: "w" },
+                        " \u00B7 ",
+                        fmtDur(csky.sade.end - obs.jd)))),
+            React.createElement("div", { className: "hr" }),
+            React.createElement("div", { className: "eyebrow" }, t.trNow),
+            transits.filter((x) => x.key !== "Moon" && x.key !== "Ketu").map((tr) => (React.createElement("div", { key: tr.key, className: "trrow", style: { cursor: "pointer" }, onClick: () => setSel("tr:" + tr.key) },
+                React.createElement("span", { className: "dot", style: { background: PC[tr.key] } }, PL[tr.key].ab),
+                PN(tr.key),
+                " ",
+                t.inW,
+                " ",
+                SNL(tr.sign),
+                " (",
+                NN(tr.nak),
+                ")",
+                React.createElement("span", { className: "w" },
+                    t.until,
+                    " ",
+                    fmtD(tr.until, obs.tz))))),
+            React.createElement("div", { className: "hr" }),
+            React.createElement("div", { className: "eyebrow" }, t.soon),
+            csky.events.map((e, i) => React.createElement("div", { key: i, className: "ev" },
+                React.createElement("span", { className: "d" }, fmtD(e.jd, obs.tz)),
+                e.txt)),
+            React.createElement("div", { className: "hr" }),
+            React.createElement("div", { className: "eyebrow" }, t.muh),
+            csky.rs && (React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "daybar" }, csky.muh.map((w, i) => {
+                    const lft = ((w.s - jdFrom(lo.y, lo.mo, lo.d, 0, 0, obs.tz)) * 100).toFixed(1);
+                    const wd = ((w.e - w.s) * 100).toFixed(1);
+                    return React.createElement("div", { key: i, className: "dayseg", style: { left: `${lft}%`, width: `${wd}%`, background: w.good ? "var(--good)" : "var(--bad)", opacity: w.good ? 1 : .8 } });
+                })),
+                React.createElement("div", { className: "dayt" },
+                    React.createElement("span", null, "00"),
+                    React.createElement("span", null, "06"),
+                    React.createElement("span", null, "12"),
+                    React.createElement("span", null, "18"),
+                    React.createElement("span", null, "24")),
+                React.createElement("div", { style: { marginTop: 7 } }, csky.muh.map((w, i) => (React.createElement("div", { key: i, className: "win" },
+                    React.createElement("span", { className: "t", style: { color: w.good ? "var(--good)" : "var(--bad)" } },
+                        fmtHM(w.s, obs.tz),
+                        "\u2013",
+                        fmtHM(w.e, obs.tz)),
+                    React.createElement("span", null,
+                        w.n,
+                        " ",
+                        React.createElement("span", { className: "u" },
+                            "\u00B7 ",
+                            w.u)))))))))),
+        selP && (React.createElement("div", { className: "panel right" },
+            React.createElement("div", { className: "eyebrow" },
+                "Inspector",
+                React.createElement("button", { className: "x", onClick: () => setSel(null) }, "\u2715")),
+            React.createElement("div", { className: "ih" },
+                React.createElement("div", { className: "ig", style: { background: SPHERE[selP.key] || PC[selP.key] } },
+                    React.createElement("span", null, PL[selP.key].ab)),
+                React.createElement("div", null,
+                    React.createElement("div", { className: "iname" }, PN(selP.key)),
+                    React.createElement("div", { className: "isub" },
+                        SN(selP.sign),
+                        " ",
+                        fmtDeg(selP.deg),
+                        " \u00B7 \u0434\u043E\u043C ",
+                        selP.house,
+                        " \u00B7 ",
+                        NN(selP.nak),
+                        " ",
+                        selP.pada))),
+            React.createElement("div", { className: "tags" },
+                SIGN_LORD[res.ascSign] === selP.key && React.createElement("span", { className: "tag", style: { color: "var(--gold)", borderColor: "rgba(232,182,76,.5)" } }, t.lagnesh),
+                selP.karaka !== undefined && React.createElement("span", { className: "tag", style: { color: "var(--live)", borderColor: "rgba(127,183,216,.4)" } }, KARAKA[LANGG][selP.karaka]),
+                statuses(selP).map(([m, c2], i) => React.createElement("span", { key: i, className: "tag", style: { color: c2, borderColor: c2 + "66" } }, m))),
+            React.createElement("div", { className: "gbox" },
+                React.createElement(InspGraph, { p: selP, res: res, onPick: setSel })),
+            selP.rules.length > 0 && React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.rules),
+                React.createElement("span", null,
+                    t.housesW,
+                    " ",
+                    selP.rules.join(", "))),
+            React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.aspectsTo),
+                React.createElement("span", null,
+                    t.housesW,
+                    " ",
+                    selP.aspects.join(", "))),
+            selP.relation && React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.disp),
+                React.createElement("span", null,
+                    PN(selP.dispositor),
+                    " \u00B7 ",
+                    REL_LBL[LANGG][selP.relation].toLowerCase())),
+            React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.dign),
+                React.createElement("span", null, DIG_LBL[LANGG][selP.dig || "n"])),
+            React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.nav),
+                React.createElement("span", null,
+                    SN(selP.d9sign),
+                    selP.vargottama ? " · " + t.vargo : "")),
+            React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.fromMoon),
+                React.createElement("span", null,
+                    "\u0434\u043E\u043C ",
+                    selP.houseFromMoon)))),
+        selT && (React.createElement("div", { className: "panel right" },
+            React.createElement("div", { className: "eyebrow" },
+                "Transit",
+                React.createElement("button", { className: "x", onClick: () => setSel(null) }, "\u2715")),
+            React.createElement("div", { className: "ih" },
+                React.createElement("div", { className: "ig", style: { background: SPHERE[selT.key] || PC[selT.key] } },
+                    React.createElement("span", null, PL[selT.key].ab)),
+                React.createElement("div", null,
+                    React.createElement("div", { className: "iname" }, PN(selT.key)),
+                    React.createElement("div", { className: "isub" },
+                        t.transitW,
+                        " \u00B7 ",
+                        fmtDT(obs.jd, obs.tz)))),
+            React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.sign),
+                React.createElement("span", null,
+                    SN(selT.sign),
+                    " \u00B7 ",
+                    t.until,
+                    " ",
+                    React.createElement("b", null, fmtD(selT.until, obs.tz)))),
+            React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.nakW),
+                React.createElement("span", null,
+                    NN(selT.nak),
+                    " \u00B7 ",
+                    t.until,
+                    " ",
+                    React.createElement("b", null, fmtD(selT.untilNak, obs.tz)))),
+            React.createElement("div", { className: "irow" },
+                React.createElement("span", { className: "k" }, t.inYourChart),
+                React.createElement("span", null,
+                    t.inHouse,
+                    " ",
+                    ((selT.sign - res.ascSign + 12) % 12) + 1,
+                    " ",
+                    t.house)))),
+        panel === "timeline" && (() => {
+            const R0 = [res.jd, res.jd + span];
+            const mSel = tlSel.m != null ? res.dashas[tlSel.m] : null;
+            const aSel = mSel && tlSel.a != null ? mSel.antars[tlSel.a] : null;
+            const pratys = aSel ? subDashas(aSel.lord, aSel.start, aSel.end) : null;
+            const zoom = (v, R) => ((v - R[0]) / (R[1] - R[0])) * 100;
+            const zst = (seg, R) => ({ left: `${zoom(seg.start, R)}%`, width: `${((seg.end - seg.start) / (R[1] - R[0])) * 100}%` });
+            const lab = (seg, R, mo) => {
+                const w = ((seg.end - seg.start) / (R[1] - R[0])) * 100;
+                const a = jdToLocal(seg.start, 0), b = jdToLocal(seg.end, 0);
+                if (mo)
+                    return w > 15 ? `${PL[seg.lord].ab} ${String(a.mo).padStart(2, "0")}.${a.y}–${String(b.mo).padStart(2, "0")}.${b.y}` : w > 4.5 ? PL[seg.lord].ab : "";
+                return w > 10 ? `${PL[seg.lord].ab} ${a.y}–${b.y}` : w > 3 ? PL[seg.lord].ab : "";
+            };
+            const tip = (pfx, seg) => `${pfx} · ${fmtD(seg.start, obs.tz)} — ${fmtD(seg.end, obs.tz)}`;
+            const marks = (R) => (React.createElement(React.Fragment, null,
+                nowJD >= R[0] && nowJD <= R[1] && React.createElement("div", { className: "tlnow", style: { left: `${zoom(nowJD, R)}%` } }),
+                obs.jd >= R[0] && obs.jd <= R[1] && React.createElement("div", { className: "tlobs", style: { left: `${zoom(obs.jd, R)}%` } })));
+            const trackClick = (R) => (e) => { const r = e.currentTarget.getBoundingClientRect(); setObsJd(R[0] + ((e.clientX - r.left) / r.width) * (R[1] - R[0])); };
+            const Rm = mSel ? [mSel.start, mSel.end] : null;
+            const Ra = aSel ? [aSel.start, aSel.end] : null;
+            const pNow = csky && csky.antar ? subDashas(csky.antar.lord, csky.antar.start, csky.antar.end).find((x) => obs.jd >= x.start && obs.jd < x.end) : null;
+            const sadeNow = res.sade.find((x) => obs.jd >= x.start && obs.jd < x.end);
+            const sadeNext = res.sade.find((x) => x.start > obs.jd);
+            return (React.createElement("div", { className: "panel wide term", style: { top: "auto", bottom: 52 } },
+                React.createElement("div", { className: "eyebrow" },
+                    t.timeline,
+                    " \u00B7 \u0412\u0438\u043C\u0448\u043E\u0442\u0442\u0430\u0440\u0438",
+                    React.createElement("button", { className: "x", onClick: () => setPanel(null) }, "\u2715")),
+                React.createElement("div", { className: "bigrow" },
+                    React.createElement("span", { className: "bigl" }, t.maha),
+                    React.createElement("div", { className: "bigtrack", onClick: trackClick(R0) },
+                        res.dashas.map((dd, i) => (React.createElement("div", { key: i, className: `zseg ${tlSel.m === i ? "selseg" : ""}`, style: { ...zst(dd, R0), background: PC[dd.lord] }, title: tip(PL[dd.lord].ab, dd), onClick: () => setTlSel(tlSel.m === i ? {} : { m: i }) }, lab(dd, R0)))),
+                        res.sade.map((x, i) => React.createElement("div", { key: "s" + i, className: "sadeover", style: zst(x, R0), title: tip("Sade Sati", x) })),
+                        marks(R0))),
+                mSel && (React.createElement("div", { className: "bigrow" },
+                    React.createElement("span", { className: "bigl" },
+                        t.antar,
+                        " ",
+                        React.createElement("b", { style: { color: PC[mSel.lord] } }, PL[mSel.lord].ab)),
+                    React.createElement("div", { className: "bigtrack", onClick: trackClick(Rm) },
+                        mSel.antars.map((a, j) => (React.createElement("div", { key: j, className: `zseg ${tlSel.a === j ? "selseg" : ""}`, style: { ...zst(a, Rm), background: PC[a.lord], opacity: .9 }, title: tip(`${PL[mSel.lord].ab}–${PL[a.lord].ab}`, a), onClick: () => setTlSel(tlSel.a === j ? { m: tlSel.m } : { m: tlSel.m, a: j }) }, lab(a, Rm, 1)))),
+                        marks(Rm)))),
+                pratys && (React.createElement("div", { className: "bigrow" },
+                    React.createElement("span", { className: "bigl" },
+                        t.praty,
+                        " ",
+                        React.createElement("b", { style: { color: PC[aSel.lord] } },
+                            PL[mSel.lord].ab,
+                            "\u2013",
+                            PL[aSel.lord].ab)),
+                    React.createElement("div", { className: "bigtrack", onClick: trackClick(Ra) },
+                        pratys.map((pp, j) => (React.createElement("div", { key: j, className: "zseg", style: { ...zst(pp, Ra), background: PC[pp.lord], opacity: .8 }, title: tip(`${PL[mSel.lord].ab}–${PL[aSel.lord].ab}–${PL[pp.lord].ab}`, pp) }, lab(pp, Ra, 1)))),
+                        marks(Ra)))),
+                React.createElement("div", { className: "bigrow" },
+                    React.createElement("span", { className: "bigl" }, t.sade),
+                    React.createElement("div", { className: "bigtrack", style: { background: "transparent", cursor: "default" } },
+                        res.sade.map((x, i) => React.createElement("div", { key: i, className: "sadeb", style: zst(x, R0), title: tip("Sade Sati", x) })),
+                        marks(R0))),
+                React.createElement("div", { className: "bigrow" },
+                    React.createElement("span", { className: "bigl" }, t.years),
+                    React.createElement("div", { style: { flex: 1, display: "flex", justifyContent: "space-between", fontFamily: "var(--mono)", fontSize: 8.5, color: "var(--dim)" } }, [0, 20, 40, 60, 80, 100].map((yy) => React.createElement("span", { key: yy }, natal.y + yy)))),
+                React.createElement("div", { className: "tfoot" },
+                    React.createElement("span", null,
+                        "\u25C9 ",
+                        fmtD(obs.jd, obs.tz),
+                        ":",
+                        " ",
+                        csky && csky.maha ? React.createElement("b", null,
+                            PL[csky.maha.lord].ab,
+                            csky.antar ? "–" + PL[csky.antar.lord].ab : "",
+                            pNow ? "–" + PL[pNow.lord].ab : "") : "—"),
+                    sadeNow
+                        ? React.createElement("span", { style: { color: "var(--bad)" } },
+                            t.sadeOn,
+                            " \u00B7 ",
+                            t.until,
+                            " ",
+                            fmtD(sadeNow.end, obs.tz),
+                            " \u00B7 ",
+                            t.left,
+                            " ",
+                            fmtDur(sadeNow.end - obs.jd))
+                        : sadeNext && React.createElement("span", null,
+                            t.toSade,
+                            ": ",
+                            fmtDur(sadeNext.start - obs.jd),
+                            " (",
+                            fmtD(sadeNext.start, obs.tz),
+                            ")"),
+                    React.createElement("span", { style: { opacity: .7 } }, t.clickTL))));
+        })(),
+        panel === "library" && (React.createElement("div", { className: "panel wide" },
+            React.createElement("div", { className: "eyebrow" },
+                t.library,
+                React.createElement("button", { className: "x", onClick: () => setPanel(null) }, "\u2715")),
+            React.createElement("div", { style: { fontSize: 12, color: "var(--dim)", marginBottom: 6 } }, t.libSub),
+            React.createElement("div", { className: "cards" },
+                React.createElement("div", { className: "card", onClick: () => setPanel("reading") },
+                    React.createElement("span", { className: "k" }, "\u043C\u0435\u0442\u043E\u0434\u0438\u043A\u0430 \u00B7 \u043F\u0430\u0441\u043F\u043E\u0440\u0442"),
+                    React.createElement("h3", { style: { marginTop: 6 } }, "\u041A\u0442\u043E \u044F"),
+                    React.createElement("p", null, "\u0422\u0440\u0438 \u0442\u043E\u0447\u043A\u0438 \u2014 \u041B\u0430\u0433\u043D\u0430, \u041B\u0443\u043D\u0430, \u0421\u043E\u043B\u043D\u0446\u0435. \u0422\u0435\u043B\u043E, \u0447\u0443\u0432\u0441\u0442\u0432\u0430 \u0438 \u0432\u043E\u043B\u044F: \u043A\u0430\u043A \u043E\u043D\u0438 \u0441\u0432\u044F\u0437\u0430\u043D\u044B \u0438 \u0433\u0434\u0435 \u043D\u0430\u043F\u0440\u044F\u0436\u0435\u043D\u0438\u0435.")),
+                [["Деньги", "Как я зарабатываю и управляю ресурсами"], ["Отношения", "Партнёрство, брак, близость"], ["Предназначение", "Дхарма и путь души"], ["Род", "Родовые программы и карма прошлого"]].map(([h, p2]) => (React.createElement("div", { key: h, className: "card dis" },
+                    React.createElement("span", { className: "k" }, t.soonCard),
+                    React.createElement("h3", { style: { marginTop: 6 } }, h),
+                    React.createElement("p", null, p2))))))),
+        panel === "reading" && res && (React.createElement("div", { className: "panel wide", style: { overflowY: "auto" } },
+            React.createElement("div", { className: "eyebrow" },
+                React.createElement("button", { className: "x", style: { marginLeft: 0, marginRight: 10 }, onClick: () => setPanel("library") }, "\u2190"),
+                t.readTitle,
+                React.createElement("button", { className: "x", onClick: () => setPanel(null) }, "\u2715")),
+            React.createElement("div", { className: "read" },
+                React.createElement("div", { style: { fontSize: 12, color: "var(--dim)", margin: "2px 0 14px" } }, t.readSub),
+                React.createElement(ThreePoints, { res: res })))),
+        React.createElement("div", { className: "tlmini", onClick: () => setPanel(panel === "timeline" ? null : "timeline") },
+            React.createElement("span", { className: "tllab" }, t.timeline),
+            React.createElement("div", { className: "tltrack" },
+                res.dashas.map((dd, i) => {
+                    const wp = ((dd.end - dd.start) / span) * 100;
+                    return React.createElement("div", { key: i, className: "tlseg", style: { width: `${wp}%`, background: PC[dd.lord] } }, wp > 3.5 ? PL[dd.lord].ab : "");
+                }),
+                React.createElement("div", { className: "tlnow", style: { left: `${pct(nowJD)}%` } }),
+                React.createElement("div", { className: "tlobs", style: { left: `${pct(obs.jd)}%` } })),
+            React.createElement("span", { className: "tlyr" },
+                natal.y,
+                " \u2014 ",
+                natal.y + 100))));
+}
+/* граф связей в инспекторе */
+function InspGraph({ p, res, onPick }) {
+    const conj = res.planets.filter((q) => q.key !== p.key && q.sign === p.sign).slice(0, 3);
+    const disp = SIGN_LORD[p.sign] !== p.key ? SIGN_LORD[p.sign] : null;
+    const sats = [];
+    conj.forEach((q) => sats.push({ type: "pl", key: q.key, lab: G_LBL[LANGG].conj }));
+    if (disp)
+        sats.push({ type: "pl", key: disp, lab: G_LBL[LANGG].disp });
+    if (p.rules.length)
+        sats.push({ type: "chip", txt: `дома ${p.rules.join("·")}`, lab: G_LBL[LANGG].rules });
+    sats.push({ type: "chip", txt: `асп ${p.aspects.join("·")}`, lab: G_LBL[LANGG].asp });
+    sats.push({ type: "chip", txt: NN(p.nak), lab: G_LBL[LANGG].nak });
+    const POS = [[52, 40], [180, 40], [200, 110], [32, 110], [70, 176], [168, 176]];
+    return (React.createElement("svg", { viewBox: "0 0 232 214", style: { display: "block", width: "100%" } },
+        sats.map((s, i) => React.createElement("line", { key: i, className: "gedge", x1: "116", y1: "104", x2: POS[i][0], y2: POS[i][1] })),
+        sats.map((s, i) => {
+            const [x, y] = POS[i];
+            const lx = (116 + x) / 2, ly = (104 + y) / 2 - 3;
+            return React.createElement("text", { key: "l" + i, className: "gel", x: lx, y: ly, textAnchor: "middle" }, s.lab);
+        }),
+        sats.map((s, i) => {
+            const [x, y] = POS[i];
+            return s.type === "pl" ? (React.createElement("g", { key: i, style: { cursor: "pointer" }, onClick: () => onPick(s.key) },
+                React.createElement("circle", { cx: x, cy: y, r: "12.5", fill: PC[s.key] }),
+                React.createElement("text", { className: "gn", x: x, y: y + 3, textAnchor: "middle", fill: "#0b0d12" }, PL[s.key].ab))) : (React.createElement("g", { key: i },
+                React.createElement("rect", { x: x - 26, y: y - 10, width: "52", height: "20", rx: "6", fill: "#161d2c", stroke: "#33507a" }),
+                React.createElement("text", { className: "gn", x: x, y: y + 3, textAnchor: "middle", fill: "#9fb4d8", fontSize: "6.4" }, s.txt)));
+        }),
+        React.createElement("circle", { cx: "116", cy: "104", r: "16", fill: PC[p.key] }),
+        React.createElement("text", { className: "gn", x: "116", y: "108", textAnchor: "middle", fontSize: "9.5", fill: "#0b0d12" }, PL[p.key].ab)));
+}
+/* «Кто я» — три точки (слоёный синтез из движка) */
+function ThreePoints({ res }) {
+    const moon = res.planets.find((p) => p.key === "Moon");
+    const sun = res.planets.find((p) => p.key === "Sun");
+    const items = [
+        { k: "lm", n: moon.house, pt: "Moon", nak: moon.nak, pada: moon.pada, sign: moon.sign, padaSign: navamshaSign(moon.lon) },
+        { k: "ls", n: sun.house, pt: "Sun", nak: sun.nak, pada: sun.pada, sign: sun.sign, padaSign: navamshaSign(sun.lon) },
+        { k: "sm", n: ((moon.sign - sun.sign) + 12) % 12 + 1, pt: "Moon", nak: moon.nak, pada: moon.pada, sign: moon.sign, padaSign: navamshaSign(moon.lon) },
+    ];
+    return (React.createElement(React.Fragment, null, items.map((it) => {
+        const M = P3[it.k], crack = DUSTHANA.includes(it.n);
+        const cls = houseClasses(it.n), meta = NAK_META[it.nak], main = cls[0];
+        return (React.createElement("div", { key: it.k, className: `p3c ${crack ? "crack" : ""}` },
+            React.createElement("div", { className: "p3h" },
+                M.t.ru,
+                " \u00B7 ",
+                it.n,
+                " \u0434\u043E\u043C"),
+            React.createElement("div", { className: "p3q" }, M.q.ru),
+            React.createElement("div", { className: "pass" },
+                PN(it.pt),
+                " \u2014 ",
+                SN(it.sign),
+                " \u00B7 ",
+                NN(it.nak),
+                ", \u043F\u0430\u0434\u0430 ",
+                it.pada,
+                " ",
+                React.createElement("span", { style: { color: "var(--dim)" } },
+                    "(\u0443\u043F\u0440. ",
+                    PL[NAKS[it.nak][2]].ru,
+                    " \u00B7 \u0441\u0438\u043C\u0432\u043E\u043B: ",
+                    meta[0],
+                    " \u00B7 \u0431\u043E\u0436\u0435\u0441\u0442\u0432\u043E: ",
+                    meta[1],
+                    ")")),
+            React.createElement("p", null, M.v[it.n - 1].ru),
+            React.createElement("p", null, cls.map((c) => CLASS_TXT[c].ru).join(" ")),
+            React.createElement("p", null,
+                "\u041D\u0430\u043A\u0448\u0430\u0442\u0440\u0430 ",
+                NN(it.nak),
+                " \u043E\u043A\u0440\u0430\u0448\u0438\u0432\u0430\u0435\u0442 \u0441\u0432\u044F\u0437\u044C \u0442\u0435\u043C\u043E\u0439: ",
+                React.createElement("b", null, meta[2]),
+                ". ",
+                it.pada,
+                "-\u044F \u043F\u0430\u0434\u0430 (\u043D\u0430\u0432\u0430\u043C\u0448\u0430 \u0432 ",
+                SN(it.padaSign),
+                ") \u0434\u043E\u0431\u0430\u0432\u043B\u044F\u0435\u0442 \u043D\u043E\u0442\u0443: ",
+                SIGN_KEY[it.padaSign],
+                "."),
+            React.createElement("p", { className: "ex" }, EX_TXT[it.k][main]),
+            React.createElement("p", { className: "shakti" },
+                SHAKTI_TXT[main].s,
+                React.createElement("br", null),
+                SHAKTI_TXT[main].t)));
+    })));
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+
+</script>
+</body>
+</html>
